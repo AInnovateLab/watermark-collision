@@ -1,8 +1,7 @@
 import sys
-import torch
+sys.path.append("/home/lyy/workspace/Watermark/watermarking")
 from watermarking.extended_watermark_processor import WatermarkLogitsProcessor, WatermarkDetector
 from transformers import AutoTokenizer, AutoModelForCausalLM, LogitsProcessorList
-sys.path.append("/home/lyy/workspace/Watermark/watermarking")
 
 def main(input_text):
     # Load model directly
@@ -37,7 +36,8 @@ You're welcome! Here's a paraphrased version of the original message:
     watermark_processor = WatermarkLogitsProcessor(vocab=list(tokenizer.get_vocab().values()),
                                                 gamma=0.25,
                                                 delta=2.0,
-                                                seeding_scheme="selfhash") #equivalent to `ff-anchored_minhash_prf-4-True-15485863`
+                                                seeding_scheme="selfhash",
+                                                hash_key=2024) #equivalent to `ff-anchored_minhash_prf-4-True-15485863`
     # Note:
     # You can turn off self-hashing by setting the seeding scheme to `minhash`.
 
@@ -63,11 +63,12 @@ You're welcome! Here's a paraphrased version of the original message:
                                             tokenizer=tokenizer,
                                             z_threshold=4.0,
                                             normalizers=[],
-                                            ignore_repeated_ngrams=True)
+                                            ignore_repeated_ngrams=True,
+                                            hash_key=2024)
 
     score_dict = watermark_detector.detect(output_text) # or any other text of interest to analyze
     print(score_dict)
 
 if __name__ == "__main__":
-    # main("Thank you for providing the details for the upcoming technical interview at Huawei International Pte Ltd.")
-    main("Welcome back to campus! We hope you've recharged over the break and are ready to dive right into campus life, starting with our largest recruitment fair of the 2024")
+    main("Thank you for providing the details for the upcoming technical interview at Huawei International Pte Ltd.")
+    # main("Welcome back to campus! We hope you've recharged over the break and are ready to dive right into campus life, starting with our largest recruitment fair of the 2024")

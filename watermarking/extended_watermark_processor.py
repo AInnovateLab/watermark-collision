@@ -37,6 +37,7 @@ class WatermarkBase:
         delta: float = 2.0,
         seeding_scheme: str = "selfhash",  # simple default, find more schemes in alternative_prf_schemes.py
         select_green_tokens: bool = True,  # should always be the default if not running in legacy mode
+        hash_key: int = 15485863,
     ):
         # patch now that None could now maybe be passed as seeding_scheme
         if seeding_scheme is None:
@@ -50,13 +51,15 @@ class WatermarkBase:
         self.gamma = gamma
         self.delta = delta
         self.rng = None
+        self.hash_key = hash_key
         self._initialize_seeding_scheme(seeding_scheme)
         # Legacy behavior:
         self.select_green_tokens = select_green_tokens
 
     def _initialize_seeding_scheme(self, seeding_scheme: str) -> None:
         """Initialize all internal settings of the seeding strategy from a colloquial, "public" name for the scheme."""
-        self.prf_type, self.context_width, self.self_salt, self.hash_key = seeding_scheme_lookup(seeding_scheme)
+        print(self.hash_key)
+        self.prf_type, self.context_width, self.self_salt, self.hash_key = seeding_scheme_lookup(seeding_scheme, self.hash_key)
 
     def _seed_rng(self, input_ids: torch.LongTensor) -> None:
         """Seed RNG from local context. Not batched, because the generators we use (like cuda.random) are not batched."""

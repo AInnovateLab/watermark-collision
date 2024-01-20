@@ -33,7 +33,7 @@ props = {
 }
 
 
-def seeding_scheme_lookup(seeding_scheme: str):
+def seeding_scheme_lookup(seeding_scheme: str, hash_key=15485863):
     if not isinstance(seeding_scheme, str):
         raise ValueError("Seeding scheme should be a string summarizing the procedure.")
     if seeding_scheme == "simple_1" or seeding_scheme == "lefthash":
@@ -41,22 +41,22 @@ def seeding_scheme_lookup(seeding_scheme: str):
         prf_type = "additive_prf"
         context_width = 1
         self_salt = False
-        hash_key = 15485863
+        # hash_key = hashkey
     elif seeding_scheme == "algorithm-3" or seeding_scheme == "selfhash":
         prf_type = "anchored_minhash_prf"
         context_width = 4
         self_salt = True
-        hash_key = 15485863
+        # hash_key = hashkey
     elif seeding_scheme == "minhash":
         prf_type = "minhash_prf"
         context_width = 4
         self_salt = False
-        hash_key = 15485863
+        # hash_key = hashkey
     elif seeding_scheme == "skipgram":
         prf_type = "skipgram_prf"
         context_width = 5
         self_salt = False
-        hash_key = 15485863
+        # hash_key = hashkey
     elif seeding_scheme.startswith("ff"):  # freeform seeding scheme API - only use for experimenting
         # expects strings of the form ff-additive_prf-4-True-hash or ff-additive_prf-5-True (hash key is optional)
         split_scheme = seeding_scheme.split("-")
