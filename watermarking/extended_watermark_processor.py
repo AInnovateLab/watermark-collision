@@ -58,7 +58,7 @@ class WatermarkBase:
 
     def _initialize_seeding_scheme(self, seeding_scheme: str) -> None:
         """Initialize all internal settings of the seeding strategy from a colloquial, "public" name for the scheme."""
-        print(self.hash_key)
+        # print(self.hash_key)
         self.prf_type, self.context_width, self.self_salt, self.hash_key = seeding_scheme_lookup(seeding_scheme, self.hash_key)
 
     def _seed_rng(self, input_ids: torch.LongTensor) -> None:
