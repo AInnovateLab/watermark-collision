@@ -8,3 +8,14 @@ pip3 install auto-gptq --extra-index-url https://huggingface.github.io/autogptq-
 cd watermarking
 pip install -r requirements.txt
 ```
+
+## Usage
+```shell
+# Create original watermarked text
+bash wm.sh
+```
+
+```shell
+# Create double watermarked text
+bash rephrase.sh
+```
