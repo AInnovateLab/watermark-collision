@@ -17,8 +17,6 @@ from transformers import (
     LogitsProcessorList,
 )
 
-from watermarking.extended_watermark_processor import WatermarkDetector, WatermarkLogitsProcessor
-
 
 class Rephrase:
     def __init__(self, args):
@@ -50,6 +48,11 @@ class Rephrase:
 
     def init_watermark(self):
         if self.args.watermark_name == "watermarking":
+            from watermarking.extended_watermark_processor import (
+                WatermarkDetector,
+                WatermarkLogitsProcessor,
+            )
+
             self.watermark_processor = WatermarkLogitsProcessor(
                 vocab=list(self.tokenizer.get_vocab().values()),
                 gamma=self.settings["gamma"],
@@ -81,6 +84,26 @@ class Rephrase:
                 normalizers=[],
                 ignore_repeated_ngrams=True,
                 hash_key=self.args.hash_key,
+            )
+
+        elif self.args.watermark_name == "robust_watermark":
+            from robust_watermark.watermark import WatermarkWindow
+
+            self.watermark_detector_new = WatermarkWindow(
+                device=self.model.device,
+                window_size=0,
+                gamma=self.settings["gamma"],
+                delta=self.args.new_delta,
+                target_tokenizer=self.tokenizer,
+            )
+            self.watermark_processor = WatermarkLogitsProcessor(self.watermark_detector_new)
+
+            self.watermark_detector_original = WatermarkWindow(
+                device=self.model.device,
+                window_size=0,
+                gamma=self.settings["gamma"],
+                delta=self.settings["delta"],
+                target_tokenizer=self.tokenizer,
             )
 
     def add_prompt(self, input_data):
@@ -142,6 +165,10 @@ class Rephrase:
 
                 score_dict_ori = self.watermark_detector_original.detect(output_text)
                 score_dict_new = self.watermark_detector_new.detect(output_text)
+                if type(score_dict_new) != dict:
+                    score_dict_new = {"z_score": score_dict_new}
+                if type(score_dict_ori) != dict:
+                    score_dict_ori = {"z_score": score_dict_ori}
                 # print(score_dict['prediction'], score_dict['z_score'])
                 # write the output text to csv
                 writer.write(
