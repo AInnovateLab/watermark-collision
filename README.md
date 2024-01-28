@@ -19,3 +19,10 @@ bash wm.sh
 # Create double watermarked text
 bash rephrase.sh
 ```
+
+## Contribution
+Install pre-commit-hooks before commits:
+```shell
+pip install pre-commit
+pre-commit install
+```
