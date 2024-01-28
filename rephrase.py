@@ -10,12 +10,10 @@ import jsonlines
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    DataCollatorWithPadding,
-    LogitsProcessorList,
-)
+from transformers import AutoModelForCausalLM, AutoTokenizer, LogitsProcessorList
+
+import wm_detector as WMD
+import wm_generator as WMG
 
 
 class Rephrase:
@@ -40,71 +38,71 @@ class Rephrase:
         print("Done!")
 
         file_path = pathlib.Path(self.args.input_dir) / self.args.input_file
-        with open(file_path, "r") as f:
-            self.json_list = list(f)
-        self.settings = json.loads(self.json_list[0])
+        with jsonlines.open(file_path, "r") as reader:
+            self.data: list[dict] = list(reader)
+            self.settings = self.data[0]
+
+        self.generator: WMG.WMGeneratorBase
+        self.detector_origin: WMD.WMDetectorBase
+        self.detector_new: WMD.WMDetectorBase
 
         self.init_watermark()
 
     def init_watermark(self):
-        if self.args.watermark_name == "watermarking":
-            from watermarking.extended_watermark_processor import (
-                WatermarkDetector,
-                WatermarkLogitsProcessor,
-            )
-
-            self.watermark_processor = WatermarkLogitsProcessor(
-                vocab=list(self.tokenizer.get_vocab().values()),
+        if self.args.watermark_name == "KGW":
+            self.generator = WMG.KGWWMGenerator(
+                model=self.model,
+                tokenizer=self.tokenizer,
                 gamma=self.settings["gamma"],
-                # delta=self.settings['delta'],
                 delta=self.args.new_delta,
                 seeding_scheme=self.settings["seeding_scheme"],
                 hash_key=self.args.hash_key,
-            )  # equivalent to `ff-anchored_minhash_prf-4-True-15485863`
-
-            self.watermark_detector_original = WatermarkDetector(
-                vocab=list(self.tokenizer.get_vocab().values()),
+            )
+            self.detector_origin = WMD.KGWWMDetector(
+                model=self.model,
+                tokenizer=self.tokenizer,
                 gamma=self.settings["gamma"],  # should match original setting
                 seeding_scheme=self.settings["seeding_scheme"],  # should match original setting
-                device=self.model.device,  # must match the original rng device type
-                tokenizer=self.tokenizer,
-                z_threshold=4.0,
-                normalizers=[],
-                ignore_repeated_ngrams=True,
                 hash_key=self.settings["hash_key"],
+                z_threshold=4.0,
             )
-
-            self.watermark_detector_new = WatermarkDetector(
-                vocab=list(self.tokenizer.get_vocab().values()),
+            self.detector_new = WMD.KGWWMDetector(
+                model=self.model,
+                tokenizer=self.tokenizer,
                 gamma=self.settings["gamma"],  # should match original setting
                 seeding_scheme=self.settings["seeding_scheme"],  # should match original setting
-                device=self.model.device,  # must match the original rng device type
-                tokenizer=self.tokenizer,
-                z_threshold=4.0,
-                normalizers=[],
-                ignore_repeated_ngrams=True,
                 hash_key=self.args.hash_key,
+                z_threshold=4.0,
             )
 
-        elif self.args.watermark_name == "robust_watermark":
-            from robust_watermark.watermark import WatermarkWindow
+        elif self.args.watermark_name == "SIR":
+            # from robust_watermark.watermark import WatermarkWindow
 
-            self.watermark_detector_new = WatermarkWindow(
-                device=self.model.device,
-                window_size=0,
+            # self.watermark_detector_new = WatermarkWindow(
+            #     device=self.model.device,
+            #     window_size=0,
+            #     gamma=self.settings["gamma"],
+            #     delta=self.args.new_delta,
+            #     target_tokenizer=self.tokenizer,
+            # )
+            # self.watermark_processor = WatermarkLogitsProcessor(self.watermark_detector_new)
+
+            # self.watermark_detector_original = WatermarkWindow(
+            #     device=self.model.device,
+            #     window_size=0,
+            #     gamma=self.settings["gamma"],
+            #     delta=self.settings["delta"],
+            #     target_tokenizer=self.tokenizer,
+            # )
+            self.generator = WMG.SIRWMGenerator(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                window_size=0,  # TODO
                 gamma=self.settings["gamma"],
                 delta=self.args.new_delta,
-                target_tokenizer=self.tokenizer,
             )
-            self.watermark_processor = WatermarkLogitsProcessor(self.watermark_detector_new)
-
-            self.watermark_detector_original = WatermarkWindow(
-                device=self.model.device,
-                window_size=0,
-                gamma=self.settings["gamma"],
-                delta=self.settings["delta"],
-                target_tokenizer=self.tokenizer,
-            )
+            # TODO: detector
+            raise NotImplementedError
 
     def add_prompt(self, input_data):
         return f"""<<SYS>>\nAssume you are a helpful assistant.\nYou job is to paraphase the given text.\n<</SYS>>\n[INST]\n{input_data}\n[/INST]\nYou're welcome! Here's a paraphrased version of the original message:\n"""
@@ -115,8 +113,7 @@ class Rephrase:
         """
         Using the LM the continue writing and save the output text.
         """
-        if not os.path.exists(self.args.output_dir):
-            os.makedirs(self.args.output_dir)
+        os.makedirs(self.args.output_dir, exist_ok=True)
 
         file_path = pathlib.Path(self.args.output_dir) / self.args.output_file
 
@@ -124,24 +121,23 @@ class Rephrase:
             args_dict = vars(self.args)
             writer.write(args_dict)
 
-            for data in tqdm(self.json_list):
-                data = json.loads(data)
-                if "z_score" not in data.keys():
-                    writer.write(data)
+            for datum in tqdm(self.data):
+                if "z_score" not in datum.keys():
+                    writer.write(datum)
                     continue
-                input_text = self.add_prompt(data["generated_text"])
+                input_text = self.add_prompt(datum["generated_text"])
                 input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.cuda()
 
                 if self.args.use_wm:
-                    output_tokens = self.model.generate(
+                    output_tokens = self.generator.generate(
                         input_ids,
+                        truncate_output=True,
                         temperature=self.settings["temperature"],
                         do_sample=True,
                         top_p=self.settings["top_p"],
                         top_k=self.settings["top_k"],
                         max_new_tokens=self.args.max_new_tokens,
                         min_new_tokens=self.args.min_new_tokens,
-                        logits_processor=LogitsProcessorList([self.watermark_processor]),
                     )
                 else:
                     output_tokens = self.model.generate(
@@ -154,29 +150,15 @@ class Rephrase:
                         min_new_tokens=self.args.min_new_tokens,
                     )
 
-                # if decoder only model, then we need to isolate the
-                # newly generated tokens as only those are watermarked, the input/prompt is not
-                output_tokens = output_tokens[:, input_ids.shape[-1] :]
-                # print(output_tokens)
-
-                output_text = self.tokenizer.batch_decode(output_tokens, skip_special_tokens=True)[
-                    0
-                ]
-
-                score_dict_ori = self.watermark_detector_original.detect(output_text)
-                score_dict_new = self.watermark_detector_new.detect(output_text)
-                if type(score_dict_new) != dict:
-                    score_dict_new = {"z_score": score_dict_new}
-                if type(score_dict_ori) != dict:
-                    score_dict_ori = {"z_score": score_dict_ori}
-                # print(score_dict['prediction'], score_dict['z_score'])
+                result_ori = self.detector_origin.detect_tokens(output_tokens)
+                result_new = self.detector_new.detect_tokens(output_tokens)
                 # write the output text to csv
                 writer.write(
                     {
-                        "z_score_ori": round(score_dict_ori["z_score"], 4),
-                        "z_score_new": round(score_dict_new["z_score"], 4),
-                        "original_text": data["generated_text"],
-                        "generated_text": output_text,
+                        "z_score_ori": round(result_ori.z_score, 4),
+                        "z_score_new": round(result_new.z_score, 4),
+                        "original_text": datum["generated_text"],
+                        "generated_text": self.generator.tokens2text(output_tokens),
                     }
                 )
 
@@ -185,7 +167,7 @@ def parse():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--model_name_or_path", type=str, default="TheBloke/Llama-2-7B-GPTQ")
-    parser.add_argument("--watermark_name", type=str, default="watermarking")
+    parser.add_argument("--watermark_name", type=str, choices=["KGW", "SIR"])
     parser.add_argument("--new_delta", type=float, default=5.0)
     parser.add_argument("--max_new_tokens", type=int, default=128)
     parser.add_argument("--min_new_tokens", type=int, default=16)
