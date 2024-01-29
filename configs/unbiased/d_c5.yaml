@@ -1,4 +1,12 @@
 generator:
+  type: "unbiased"
+  mode: "delta"
   ctx_n: 5
+  generate_kwargs:
+    do_sample: True
+    num_beams: 1
+    top_k: 0
 detector:
+  type: "unbiased"
+  mode: "delta"
   ctx_n: 5

@@ -1,13 +1,17 @@
 import argparse
+import logging
 import os
 import pathlib
 
 import jsonlines
+from omegaconf import OmegaConf
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer, LogitsProcessorList
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import wm_detector as WMD
 import wm_generator as WMG
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(asctime)s %(message)s")
 
 
 class Rephrase:
@@ -17,7 +21,7 @@ class Rephrase:
         # max_dataset_length=1000
         self.args = args
         self.device = self.args.device
-        print(f"Loading model and tokenizer:{self.args.model_name_or_path}...", end="")
+        logging.info(f"Loading model and tokenizer: {self.args.model_name_or_path}")
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.args.model_name_or_path, use_fast=True, padding_side="left"
         )
@@ -29,76 +33,60 @@ class Rephrase:
         self.model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name_or_path, device_map=0, trust_remote_code=True, revision="main"
         )
-        print("Done!")
 
         file_path = pathlib.Path(self.args.input_dir) / self.args.input_file
+        logging.info(f"Loading data from: {file_path}")
         with jsonlines.open(file_path, "r") as reader:
+            self.settings = reader.read()
             self.data: list[dict] = list(reader)
-            self.settings = self.data[0]
 
-        self.generator: WMG.WMGeneratorBase
-        self.detector_origin: WMD.WMDetectorBase
+        logging.info(f"Loading Rephraser Generator config from: {self.args.rephraser_file}")
+        logging.info(f"Loading old Detector config from: {self.args.old_detector_file}")
+        logging.info(f"Loading new Detector config from: {self.args.new_detector_file}")
+        self.rephraser_config = OmegaConf.load(self.args.rephraser_file).generator
+        self.old_detector_config = OmegaConf.load(self.args.old_detector_file).detector
+        self.new_detector_config = OmegaConf.load(self.args.new_detector_file).detector
+
+        self.rephraser: WMG.WMGeneratorBase
+        self.detector_old: WMD.WMDetectorBase
         self.detector_new: WMD.WMDetectorBase
 
         self.init_watermark()
 
     def init_watermark(self):
-        if self.args.watermark_name == "KGW":
-            self.generator = WMG.KGWWMGenerator(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                gamma=self.settings["gamma"],
-                delta=self.args.new_delta,
-                seeding_scheme=self.settings["seeding_scheme"],
-                key=self.args.hash_key,
-            )
-            self.detector_origin = WMD.KGWWMDetector(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                gamma=self.settings["gamma"],  # should match original setting
-                seeding_scheme=self.settings["seeding_scheme"],  # should match original setting
-                key=self.settings["hash_key"],
-                z_threshold=4.0,
-            )
-            self.detector_new = WMD.KGWWMDetector(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                gamma=self.settings["gamma"],  # should match original setting
-                seeding_scheme=self.settings["seeding_scheme"],  # should match original setting
-                key=self.args.hash_key,
-                z_threshold=4.0,
-            )
-
-        elif self.args.watermark_name == "SIR":
-            self.generator = WMG.SIRWMGenerator(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                window_size=0,
-                gamma=self.settings["gamma"],
-                delta=self.args.new_delta,
-                key=self.args.hash_key,
-            )
-            self.detector_origin = WMD.SIRWMDetector(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                window_size=0,
-                gamma=self.settings["gamma"],  # should match original setting
-                delta=self.settings["delta"],  # should match original setting
-                key=self.settings["hash_key"],
-                z_threshold=4.0,
-            )
-            self.detector_new = WMD.SIRWMDetector(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                window_size=0,
-                gamma=self.settings["gamma"],  # should match original setting
-                delta=self.args.new_delta,  # should match args setting
-                key=self.args.hash_key,
-                z_threshold=4.0,
-            )
+        rephraser_class = WMG.get_generator_class_from_type(self.rephraser_config.type)
+        detector_old_class = WMD.get_detector_class_from_type(self.old_detector_config.type)
+        detector_new_class = WMD.get_detector_class_from_type(self.new_detector_config.type)
+        self.rephraser = rephraser_class(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            key=self.args.new_key,
+            **self.rephraser_config,
+        )
+        self.detector_old = detector_old_class(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            key=self.settings["key"],  # old key
+            **self.old_detector_config,
+        )
+        self.detector_new = detector_new_class(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            key=self.args.new_key,
+            **self.new_detector_config,
+        )
 
     def add_prompt(self, input_data):
-        return f"""<<SYS>>\nAssume you are a helpful assistant.\nYou job is to paraphase the given text.\n<</SYS>>\n[INST]\n{input_data}\n[/INST]\nYou're welcome! Here's a paraphrased version of the original message:\n"""
+        return f"""<<SYS>>
+Assume you are a helpful assistant.
+Your job is to paraphase the given text.
+<</SYS>>
+[INST]
+{input_data}
+[/INST]
+
+You're welcome! Here's a paraphrased version of the original message:
+"""
 
     def rephrase(
         self,
@@ -106,52 +94,43 @@ class Rephrase:
         """
         Using the LM the continue writing and save the output text.
         """
+        # output I/O
         os.makedirs(self.args.output_dir, exist_ok=True)
-
         file_path = pathlib.Path(self.args.output_dir) / self.args.output_file
+        logging.info(f"Saving results to {file_path}")
+
+        # generate kwargs
+        generate_kwargs = {
+            "truncate_output": True,
+            "temperature": self.args.temperature,
+            "do_sample": True,
+            "max_new_tokens": self.args.max_new_tokens,
+            "min_new_tokens": self.args.min_new_tokens,
+        }
+        generate_kwargs.update(self.rephraser_config.get("generate_kwargs", {}))
 
         with jsonlines.open(file_path, mode="w") as writer:
-            args_dict = vars(self.args)
-            writer.write(args_dict)
+            # writer.write(self.settings)
+            writer.write({"args": vars(self.args), "settings": self.settings})
 
             for datum in tqdm(self.data):
-                if "z_score" not in datum.keys():
-                    writer.write(datum)
-                    continue
                 input_text = self.add_prompt(datum["generated_text"])
                 input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.cuda()
 
                 if self.args.use_wm:
-                    output_tokens = self.generator.generate(
-                        input_ids,
-                        truncate_output=True,
-                        temperature=self.settings["temperature"],
-                        do_sample=True,
-                        top_p=self.settings["top_p"],
-                        top_k=self.settings["top_k"],
-                        max_new_tokens=self.args.max_new_tokens,
-                        min_new_tokens=self.args.min_new_tokens,
-                    )
+                    output_tokens = self.rephraser.generate(input_ids, **generate_kwargs)
                 else:
-                    output_tokens = self.model.generate(
-                        input_ids,
-                        temperature=self.settings["temperature"],
-                        do_sample=True,
-                        top_p=self.settings["top_p"],
-                        top_k=self.settings["top_k"],
-                        max_new_tokens=self.args.max_new_tokens,
-                        min_new_tokens=self.args.min_new_tokens,
-                    )
+                    output_tokens = self.model.generate(input_ids, **generate_kwargs)
 
-                result_ori = self.detector_origin.detect_tokens(output_tokens)
+                result_ori = self.detector_old.detect_tokens(output_tokens)
                 result_new = self.detector_new.detect_tokens(output_tokens)
-                # write the output text to csv
+
                 writer.write(
                     {
                         "original_results": result_ori.asdict(),
                         "generated_results": result_new.asdict(),
                         "original_text": datum["generated_text"],
-                        "generated_text": self.generator.tokens2text(output_tokens),
+                        "generated_text": self.rephraser.tokens2text(output_tokens),
                     }
                 )
 
@@ -159,18 +138,27 @@ class Rephrase:
 def parse():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--model_name_or_path", type=str, default="TheBloke/Llama-2-7B-GPTQ")
-    parser.add_argument("--watermark_name", type=str, choices=["KGW", "SIR", "unbiased"])
-    parser.add_argument("--new_delta", type=float, default=5.0)
-    parser.add_argument("--max_new_tokens", type=int, default=128)
-    parser.add_argument("--min_new_tokens", type=int, default=16)
-    parser.add_argument("--seeding_scheme", type=str, default="selfhash")
-    parser.add_argument("--hash_key", type=int, default=2024)
-    parser.add_argument("--input_file", type=str, default="wm_text.jsonl")
-    parser.add_argument("--input_dir", type=str, default="wm_text")
-    parser.add_argument("--output_file", type=str, default="wm_text.jsonl")
-    parser.add_argument("--output_dir", type=str, default="wm_text_rephrased")
-    parser.add_argument("--use_wm", action="store_true", default=False)
+    parser.add_argument("--model-name-or-path", type=str, default="TheBloke/Llama-2-7B-GPTQ")
+    # Generator/Detector loading
+    parser.add_argument("--rephraser-file", type=str, required=True, help="Yaml file for rephraser")
+    parser.add_argument(
+        "--old-detector-file", type=str, required=True, help="Yaml file for old detector"
+    )
+    parser.add_argument(
+        "--new-detector-file", type=str, required=True, help="Yaml file for new detector"
+    )
+    # generate kwargs
+    parser.add_argument("--max-new-tokens", type=int, default=128)
+    parser.add_argument("--min-new-tokens", type=int, default=16)
+    # Watermark kwargs
+    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--new-key", type=int, default=2024)
+    # I/O
+    parser.add_argument("--input-file", type=str, default="wm_text.jsonl")
+    parser.add_argument("--input-dir", type=str, default="wm_text")
+    parser.add_argument("--output-file", type=str, default="wm_text.jsonl")
+    parser.add_argument("--output-dir", type=str, default="wm_text_rephrased")
+    parser.add_argument("--use-wm", action="store_true", default=False)
     return parser.parse_args()
 
 

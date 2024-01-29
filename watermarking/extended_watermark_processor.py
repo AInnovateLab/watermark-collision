@@ -23,10 +23,10 @@ from math import sqrt
 
 import scipy.stats
 import torch
-from alternative_prf_schemes import prf_lookup, seeding_scheme_lookup
 from tokenizers import Tokenizer
 from transformers import LogitsProcessor
 
+from .alternative_prf_schemes import prf_lookup, seeding_scheme_lookup
 from .normalizers import normalization_strategy_lookup
 
 

@@ -3,10 +3,24 @@ A wrapper class for watermark generator.
 """
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Literal
+from typing import Any, Literal, Type
 
 import torch
 from transformers import GenerationMixin, LogitsProcessorList, PreTrainedTokenizer
+
+
+def get_generator_class_from_type(
+    type: Literal["KGW", "SIR", "unbiased"]
+) -> Type["WMGeneratorBase"]:
+    match type:
+        case "KGW":
+            return KGWWMGenerator
+        case "SIR":
+            return SIRWMGenerator
+        case "unbiased":
+            return UnbiasedWMGenerator
+        case _:
+            raise ValueError(f"Invalid type: {type}")
 
 
 ####################

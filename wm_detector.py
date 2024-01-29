@@ -4,10 +4,22 @@ A wrapper class for watermark detector.
 import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Type
 
 import torch
 from transformers import AutoModelForCausalLM, PreTrainedTokenizer
+
+
+def get_detector_class_from_type(type: Literal["KGW", "SIR", "unbiased"]) -> Type["WMDetectorBase"]:
+    match type:
+        case "KGW":
+            return KGWWMDetector
+        case "SIR":
+            return SIRWMDetector
+        case "unbiased":
+            return UnbiasedWMDetector
+        case _:
+            raise ValueError(f"Invalid type: {type}")
 
 
 @dataclass
@@ -23,7 +35,7 @@ class DetectResult:
             ret = {}
             for k, v in x:
                 if v is None:
-                    return
+                    continue
                 elif isinstance(v, float):
                     ret[k] = round(v, 4)
                 else:
