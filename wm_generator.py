@@ -2,7 +2,7 @@
 A wrapper class for watermark generator.
 """
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Literal
 
 import torch
 from transformers import GenerationMixin, LogitsProcessorList, PreTrainedTokenizer
@@ -227,4 +227,94 @@ class SIRWMGenerator(WMGeneratorBase):
             "gamma": self.gamma,
             "delta": self.delta,
             "hash_key": self.hash_key,
+        }
+
+
+################
+#              #
+#    Unbias    #
+#              #
+################
+class UnbiasedWMGenerator(WMGeneratorBase):
+    """
+    Wrapper class for unbiased watermark generator.
+    Ref:
+        Unbiased Watermark for Large Language Models. https://arxiv.org/abs/2310.10669
+    """
+
+    def __init__(
+        self,
+        model: GenerationMixin | Any,
+        tokenizer: PreTrainedTokenizer | Any,
+        mode: Literal["delta", "gamma"],
+        private_key: Any,
+        *args,
+        gamma: float = 1.0,
+        ctx_n: int = 5,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, tokenizer, *args, **kwargs)
+        self.mode = mode
+        self.private_key = private_key
+        self.gamma = gamma
+        self.ctx_n = ctx_n
+
+        from unbiased_watermark import (
+            Delta_Reweight,
+            Gamma_Reweight,
+            PrevN_ContextCodeExtractor,
+            WatermarkLogitsProcessor,
+            patch_model,
+        )
+
+        # current generation() doesn't accept logits_warper parameter.
+        patch_model(self.model)
+
+        if self.mode == "delta":
+            self.warper = WatermarkLogitsProcessor(
+                self.private_key,
+                Delta_Reweight(),
+                PrevN_ContextCodeExtractor(self.ctx_n),
+            )
+        elif self.mode == "gamma":
+            self.warper = WatermarkLogitsProcessor(
+                self.private_key,
+                Gamma_Reweight(self.gamma),
+                PrevN_ContextCodeExtractor(self.ctx_n),
+            )
+        else:
+            raise ValueError(f"Invalid mode: {self.mode}")
+
+    def generate(
+        self, input_ids: torch.LongTensor, *args, truncate_output: bool = True, **kwargs
+    ) -> torch.LongTensor:
+        """
+        Generate watermark tokens given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be watermarked.
+            truncate_output (bool): whether to truncate the output to the newly created tokens.
+        """
+        input_ids = self.prepare_batched_input(input_ids)
+        # generate watermark tokens
+        output_tokens = self.model.generate(
+            input_ids,
+            *args,
+            logits_warper=LogitsProcessorList([self.warper]),
+            **kwargs,
+        )
+
+        # if decoder only model, then we need to isolate the
+        # newly generated tokens as only those are watermarked, the input/prompt is not
+        if truncate_output:
+            output_tokens = output_tokens[:, input_ids.shape[-1] :]
+
+        return output_tokens
+
+    def _state_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "private_key": self.private_key,
+            "gamma": self.gamma,
+            "ctx_n": self.ctx_n,
         }

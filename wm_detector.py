@@ -3,18 +3,19 @@ A wrapper class for watermark detector.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import torch
-
-# from torch._C import LongTensor
 from transformers import AutoModelForCausalLM, PreTrainedTokenizer
 
 
 @dataclass
 class DetectResult:
-    z_score: float
-    prediction: bool
+    # KGW metrics
+    z_score: float | None = None
+    prediction: bool | None = None
+    # Unbiased metrics
+    llr_score: float | None = None
 
 
 ####################
@@ -45,7 +46,7 @@ class WMDetectorBase(ABC):
         Args:
             text (str): text to be detected.
         """
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def detect_tokens(self, input_ids: torch.LongTensor, *args, **kwargs) -> DetectResult:
@@ -55,7 +56,7 @@ class WMDetectorBase(ABC):
         Args:
             input_ids (torch.LongTensor): input_ids to be detected.
         """
-        raise NotImplementedError
+        ...
 
     def _state_dict(self) -> dict[str, Any]:
         return {
@@ -204,7 +205,7 @@ class SIRWMDetector(WMDetectorBase):
             input_ids (torch.LongTensor): input_ids to be detected.
         """
         raw_score = self.watermark_detector.detect(input_text)
-        prediction_result = True if raw_score > self.z_threshold else False
+        prediction_result = raw_score > self.z_threshold
         return DetectResult(z_score=raw_score, prediction=prediction_result)
 
     def detect_tokens(self, input_ids: torch.LongTensor, *args, **kwargs) -> DetectResult:
@@ -225,4 +226,99 @@ class SIRWMDetector(WMDetectorBase):
             "delta": self.delta,
             "hash_key": self.hash_key,
             "z_threshold": self.z_threshold,
+        }
+
+
+################
+#              #
+#    Unbias    #
+#              #
+################
+class UnbiasedWMDetector(WMDetectorBase):
+    """
+    Wrapper class for Unbiased watermark detector.
+    Ref:
+        Unbiased Watermark for Large Language Models. https://arxiv.org/abs/2310.10669
+    """
+
+    def __init__(
+        self,
+        model: AutoModelForCausalLM | Any,
+        tokenizer: PreTrainedTokenizer | Any,
+        mode: Literal["delta", "gamma"],
+        private_key: Any,
+        *args,
+        gamma: float = 1.0,
+        ctx_n: int = 5,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, tokenizer, *args, **kwargs)
+        self.mode = mode
+        self.private_key = private_key
+        self.gamma = gamma
+        self.ctx_n = ctx_n
+
+        from unbiased_watermark import (
+            Delta_Reweight,
+            Gamma_Reweight,
+            PrevN_ContextCodeExtractor,
+            WatermarkLogitsProcessor,
+        )
+
+        if self.mode == "delta":
+            self.warper = WatermarkLogitsProcessor(
+                self.private_key,
+                Delta_Reweight(),
+                PrevN_ContextCodeExtractor(self.ctx_n),
+            )
+        elif self.mode == "gamma":
+            self.warper = WatermarkLogitsProcessor(
+                self.private_key,
+                Gamma_Reweight(self.gamma),
+                PrevN_ContextCodeExtractor(self.ctx_n),
+            )
+        else:
+            raise ValueError(f"Invalid mode: {self.mode}")
+
+    def detect_text(self, text: str, temperature: float, *args, **kwargs) -> DetectResult:
+        """
+        Detect watermark given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be detected.
+        """
+        from unbiased_watermark import RobustLLR_Score, get_score
+
+        # NOTE: Hyperparameters are fixed for now.
+        scorer = RobustLLR_Score(0.1, 0.1)
+
+        raw_score, _prompt_len = get_score(
+            text,
+            watermark_processor=self.warper,
+            score=scorer,
+            model=self.model,
+            tokenizer=self.tokenizer,
+            temperature=temperature,
+            prompt="",
+        )
+
+        return DetectResult(llr_score=raw_score)
+
+    def detect_tokens(self, input_ids: torch.LongTensor, *args, **kwargs) -> DetectResult:
+        """
+        Detect watermark given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be detected.
+        """
+        input_ids = self.prepare_unbatched_input(input_ids)
+        text = self.tokenizer.decode(input_ids, skip_special_tokens=True)
+        return self.detect_text(text)
+
+    def _state_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "private_key": self.private_key,
+            "gamma": self.gamma,
+            "ctx_n": self.ctx_n,
         }
