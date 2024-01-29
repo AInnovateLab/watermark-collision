@@ -50,14 +50,14 @@ class Rephrase:
                 gamma=self.settings["gamma"],
                 delta=self.args.new_delta,
                 seeding_scheme=self.settings["seeding_scheme"],
-                hash_key=self.args.hash_key,
+                key=self.args.hash_key,
             )
             self.detector_origin = WMD.KGWWMDetector(
                 model=self.model,
                 tokenizer=self.tokenizer,
                 gamma=self.settings["gamma"],  # should match original setting
                 seeding_scheme=self.settings["seeding_scheme"],  # should match original setting
-                hash_key=self.settings["hash_key"],
+                key=self.settings["hash_key"],
                 z_threshold=4.0,
             )
             self.detector_new = WMD.KGWWMDetector(
@@ -65,7 +65,7 @@ class Rephrase:
                 tokenizer=self.tokenizer,
                 gamma=self.settings["gamma"],  # should match original setting
                 seeding_scheme=self.settings["seeding_scheme"],  # should match original setting
-                hash_key=self.args.hash_key,
+                key=self.args.hash_key,
                 z_threshold=4.0,
             )
 
@@ -76,7 +76,7 @@ class Rephrase:
                 window_size=0,
                 gamma=self.settings["gamma"],
                 delta=self.args.new_delta,
-                hash_key=self.args.hash_key,
+                key=self.args.hash_key,
             )
             self.detector_origin = WMD.SIRWMDetector(
                 model=self.model,
@@ -84,7 +84,7 @@ class Rephrase:
                 window_size=0,
                 gamma=self.settings["gamma"],  # should match original setting
                 delta=self.settings["delta"],  # should match original setting
-                hash_key=self.settings["hash_key"],
+                key=self.settings["hash_key"],
                 z_threshold=4.0,
             )
             self.detector_new = WMD.SIRWMDetector(
@@ -93,7 +93,7 @@ class Rephrase:
                 window_size=0,
                 gamma=self.settings["gamma"],  # should match original setting
                 delta=self.args.new_delta,  # should match args setting
-                hash_key=self.args.hash_key,
+                key=self.args.hash_key,
                 z_threshold=4.0,
             )
 
@@ -148,8 +148,8 @@ class Rephrase:
                 # write the output text to csv
                 writer.write(
                     {
-                        "z_score_ori": round(result_ori.z_score, 4),
-                        "z_score_new": round(result_new.z_score, 4),
+                        "original_results": result_ori.asdict(),
+                        "generated_results": result_new.asdict(),
                         "original_text": datum["generated_text"],
                         "generated_text": self.generator.tokens2text(output_tokens),
                     }
@@ -160,7 +160,7 @@ def parse():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--model_name_or_path", type=str, default="TheBloke/Llama-2-7B-GPTQ")
-    parser.add_argument("--watermark_name", type=str, choices=["KGW", "SIR"])
+    parser.add_argument("--watermark_name", type=str, choices=["KGW", "SIR", "unbiased"])
     parser.add_argument("--new_delta", type=float, default=5.0)
     parser.add_argument("--max_new_tokens", type=int, default=128)
     parser.add_argument("--min_new_tokens", type=int, default=16)

@@ -19,10 +19,16 @@ class WMGeneratorBase(ABC):
     """
 
     def __init__(
-        self, model: GenerationMixin | Any, tokenizer: PreTrainedTokenizer | Any, *args, **kwargs
+        self,
+        model: GenerationMixin | Any,
+        tokenizer: PreTrainedTokenizer | Any,
+        key: Any,
+        *args,
+        **kwargs,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
+        self.key = key
 
     @abstractmethod
     def generate(
@@ -95,18 +101,17 @@ class KGWWMGenerator(WMGeneratorBase):
         self,
         model: GenerationMixin | Any,
         tokenizer: PreTrainedTokenizer | Any,
+        key: Any,
         gamma: float,
         delta: float,
         seeding_scheme: str,
-        hash_key: int,
         *args,
         **kwargs,
     ) -> None:
-        super().__init__(model, tokenizer, *args, **kwargs)
+        super().__init__(model, tokenizer, key, *args, **kwargs)
         self.gamma = gamma
         self.delta = delta
         self.seeding_scheme = seeding_scheme
-        self.hash_key = hash_key
 
         from watermarking.extended_watermark_processor import WatermarkLogitsProcessor
 
@@ -115,7 +120,7 @@ class KGWWMGenerator(WMGeneratorBase):
             gamma=self.gamma,
             delta=self.delta,
             seeding_scheme=self.seeding_scheme,
-            hash_key=self.hash_key,
+            hash_key=self.key,
         )
 
     def generate(
@@ -149,7 +154,7 @@ class KGWWMGenerator(WMGeneratorBase):
             "gamma": self.gamma,
             "delta": self.delta,
             "seeding_scheme": self.seeding_scheme,
-            "hash_key": self.hash_key,
+            "hash_key": self.key,
         }
 
 
@@ -170,18 +175,17 @@ class SIRWMGenerator(WMGeneratorBase):
         self,
         model: GenerationMixin | Any,
         tokenizer: PreTrainedTokenizer | Any,
+        key: int,
         window_size: int,
         gamma: float,
         delta: float,
-        hash_key: int,
         *args,
         **kwargs,
     ) -> None:
-        super().__init__(model, tokenizer, *args, **kwargs)
+        super().__init__(model, tokenizer, key, *args, **kwargs)
         self.window_size = window_size
         self.gamma = gamma
         self.delta = delta
-        self.hash_key = hash_key
 
         from robust_watermark.watermark import WatermarkLogitsProcessor, WatermarkWindow
 
@@ -191,7 +195,7 @@ class SIRWMGenerator(WMGeneratorBase):
             target_tokenizer=self.tokenizer,
             gamma=self.gamma,
             delta=self.delta,
-            hash_key=self.hash_key,
+            hash_key=self.key,
         )
         self.logits_processor = WatermarkLogitsProcessor(self.watermark_model)
 
@@ -226,7 +230,7 @@ class SIRWMGenerator(WMGeneratorBase):
             "window_size": self.window_size,
             "gamma": self.gamma,
             "delta": self.delta,
-            "hash_key": self.hash_key,
+            "hash_key": self.key,
         }
 
 
@@ -246,16 +250,15 @@ class UnbiasedWMGenerator(WMGeneratorBase):
         self,
         model: GenerationMixin | Any,
         tokenizer: PreTrainedTokenizer | Any,
+        key: Any,
         mode: Literal["delta", "gamma"],
-        private_key: Any,
         *args,
         gamma: float = 1.0,
         ctx_n: int = 5,
         **kwargs,
     ) -> None:
-        super().__init__(model, tokenizer, *args, **kwargs)
+        super().__init__(model, tokenizer, key, *args, **kwargs)
         self.mode = mode
-        self.private_key = private_key
         self.gamma = gamma
         self.ctx_n = ctx_n
 
@@ -272,13 +275,13 @@ class UnbiasedWMGenerator(WMGeneratorBase):
 
         if self.mode == "delta":
             self.warper = WatermarkLogitsProcessor(
-                self.private_key,
+                self.key,
                 Delta_Reweight(),
                 PrevN_ContextCodeExtractor(self.ctx_n),
             )
         elif self.mode == "gamma":
             self.warper = WatermarkLogitsProcessor(
-                self.private_key,
+                self.key,
                 Gamma_Reweight(self.gamma),
                 PrevN_ContextCodeExtractor(self.ctx_n),
             )
@@ -314,7 +317,7 @@ class UnbiasedWMGenerator(WMGeneratorBase):
     def _state_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
-            "private_key": self.private_key,
+            "private_key": self.key,
             "gamma": self.gamma,
             "ctx_n": self.ctx_n,
         }

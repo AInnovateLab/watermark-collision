@@ -1,0 +1,9 @@
+generator:
+  window_size: 0
+  gamma: 0.5
+  delta: 1.0
+detector:
+  window_size: 0
+  gamma: 0.5
+  delta: 1.0
+  z_threshold: 0.0

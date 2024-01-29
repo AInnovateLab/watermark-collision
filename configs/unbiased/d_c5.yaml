@@ -1,0 +1,4 @@
+generator:
+  ctx_n: 5
+detector:
+  ctx_n: 5

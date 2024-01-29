@@ -65,14 +65,14 @@ class Watermarking:
                 gamma=self.args.gamma,
                 delta=self.args.delta,
                 seeding_scheme=self.args.seeding_scheme,
-                hash_key=self.args.hash_key,
+                key=self.args.hash_key,
             )
             self.detector = WMD.KGWWMDetector(
                 model=self.model,
                 tokenizer=self.tokenizer,
                 gamma=self.args.gamma,  # should match original setting
                 seeding_scheme=self.args.seeding_scheme,  # should match original setting
-                hash_key=self.args.hash_key,
+                key=self.args.hash_key,
                 z_threshold=4.0,
             )
 
@@ -83,7 +83,7 @@ class Watermarking:
                 window_size=0,
                 gamma=self.args.gamma,
                 delta=self.args.delta,
-                hash_key=self.args.hash_key,
+                key=self.args.hash_key,
             )
             self.detector = WMD.SIRWMDetector(
                 model=self.model,
@@ -91,7 +91,7 @@ class Watermarking:
                 window_size=0,
                 gamma=self.args.gamma,
                 delta=self.args.delta,
-                hash_key=self.args.hash_key,
+                key=self.args.hash_key,
                 z_threshold=0,
             )
 
@@ -103,12 +103,14 @@ class Watermarking:
 
         file_path = pathlib.Path(self.args.output_dir) / self.args.output_file
 
-        with jsonlines.open(file_path, mode="w") as writer:
+        with jsonlines.open(file_path, mode="w") as writer, tqdm(
+            total=self.args.max_valid, desc="Valid samples"
+        ) as pbar:
             args_dict = vars(self.args)
             writer.write(args_dict)
             valid_num = 0
 
-            for data in tqdm(self.tokenized_dataset):
+            for data in self.tokenized_dataset:
                 input_ids = data["input_ids"].to(self.device)
                 # print(input_ids)
                 output_tokens = self.generator.generate(
@@ -126,19 +128,20 @@ class Watermarking:
                 # newly generated tokens as only those are watermarked, the input/prompt is not
 
                 output_text = self.generator.tokens2text(output_tokens)
-                score_dict = self.detector.detect_tokens(output_tokens)
+                detect_result = self.detector.detect_tokens(output_tokens)
 
                 # print(score_dict['prediction'], score_dict['z_score'])
-                if score_dict.prediction:
+                if detect_result.prediction == True or detect_result.prediction is None:
                     valid_num += 1
                     # write the output text to csv
                     writer.write(
                         {
-                            "z_score": round(score_dict.z_score, 4),
+                            "results": detect_result.asdict(),
                             "original_text": data["text"],
                             "generated_text": output_text,
                         }
                     )
+                    pbar.update()
 
                 if valid_num >= self.args.max_valid:
                     break

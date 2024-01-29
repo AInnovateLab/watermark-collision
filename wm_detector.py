@@ -1,6 +1,7 @@
 """
 A wrapper class for watermark detector.
 """
+import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -17,6 +18,20 @@ class DetectResult:
     # Unbiased metrics
     llr_score: float | None = None
 
+    def asdict(self) -> dict[str, Any]:
+        def _to_dict(x):
+            ret = {}
+            for k, v in x:
+                if v is None:
+                    return
+                elif isinstance(v, float):
+                    ret[k] = round(v, 4)
+                else:
+                    ret[k] = v
+            return ret
+
+        return dataclasses.asdict(self, dict_factory=_to_dict)
+
 
 ####################
 #                  #
@@ -32,11 +47,13 @@ class WMDetectorBase(ABC):
         self,
         model: AutoModelForCausalLM | Any,
         tokenizer: PreTrainedTokenizer | Any,
+        key: Any,
         *args,
         **kwargs,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
+        self.key = key
 
     @abstractmethod
     def detect_text(self, text: str, *args, **kwargs) -> DetectResult:
@@ -63,6 +80,7 @@ class WMDetectorBase(ABC):
             "model_class_name": self.model.__class__.__name__,
             "tokenizer_class_name": self.tokenizer.__class__.__name__,
             "model_type_name": self.model.config.model_type,
+            "key": self.key,
         }
 
     def state_dict(self) -> dict[str, Any]:
@@ -100,17 +118,16 @@ class KGWWMDetector(WMDetectorBase):
         self,
         model: AutoModelForCausalLM | Any,
         tokenizer: PreTrainedTokenizer | Any,
+        key: int,
         gamma: float,
         seeding_scheme: str,
-        hash_key: int,
         *args,
         z_threshold: float = 4.0,
         **kwargs,
     ) -> None:
-        super().__init__(model, tokenizer, *args, **kwargs)
+        super().__init__(model, tokenizer, key, *args, **kwargs)
         self.gamma = gamma
         self.seeding_scheme = seeding_scheme
-        self.hash_key = hash_key
         self.z_threshold = z_threshold
 
         from watermarking.extended_watermark_processor import WatermarkDetector
@@ -124,7 +141,7 @@ class KGWWMDetector(WMDetectorBase):
             z_threshold=self.z_threshold,
             normalizers=[],
             ignore_repeated_ngrams=True,
-            hash_key=self.hash_key,
+            hash_key=self.key,
         )
 
     def detect_text(self, text: str, *args, **kwargs) -> DetectResult:
@@ -152,7 +169,7 @@ class KGWWMDetector(WMDetectorBase):
         return {
             "gamma": self.gamma,
             "seeding_scheme": self.seeding_scheme,
-            "hash_key": self.hash_key,
+            "hash_key": self.key,
             "z_threshold": self.z_threshold,
         }
 
@@ -171,19 +188,18 @@ class SIRWMDetector(WMDetectorBase):
         self,
         model: AutoModelForCausalLM | Any,
         tokenizer: PreTrainedTokenizer | Any,
+        key: int,
         window_size: int,
         gamma: float,
         delta: float,
-        hash_key: int,
         z_threshold: int = 0,
         *args,
         **kwargs,
     ) -> None:
-        super().__init__(model, tokenizer, *args, **kwargs)
+        super().__init__(model, tokenizer, key, *args, **kwargs)
         self.window_size = window_size
         self.gamma = gamma
         self.delta = delta
-        self.hash_key = hash_key
         self.z_threshold = z_threshold
 
         from robust_watermark.watermark import WatermarkWindow
@@ -194,7 +210,7 @@ class SIRWMDetector(WMDetectorBase):
             gamma=self.gamma,
             delta=self.delta,
             target_tokenizer=self.tokenizer,
-            hash_key=self.hash_key,
+            hash_key=self.key,
         )
 
     def detect_text(self, input_text):
@@ -224,7 +240,7 @@ class SIRWMDetector(WMDetectorBase):
             "window_size": self.window_size,
             "gamma": self.gamma,
             "delta": self.delta,
-            "hash_key": self.hash_key,
+            "hash_key": self.key,
             "z_threshold": self.z_threshold,
         }
 
@@ -245,16 +261,15 @@ class UnbiasedWMDetector(WMDetectorBase):
         self,
         model: AutoModelForCausalLM | Any,
         tokenizer: PreTrainedTokenizer | Any,
+        key: Any,
         mode: Literal["delta", "gamma"],
-        private_key: Any,
         *args,
         gamma: float = 1.0,
         ctx_n: int = 5,
         **kwargs,
     ) -> None:
-        super().__init__(model, tokenizer, *args, **kwargs)
+        super().__init__(model, tokenizer, key, *args, **kwargs)
         self.mode = mode
-        self.private_key = private_key
         self.gamma = gamma
         self.ctx_n = ctx_n
 
@@ -267,13 +282,13 @@ class UnbiasedWMDetector(WMDetectorBase):
 
         if self.mode == "delta":
             self.warper = WatermarkLogitsProcessor(
-                self.private_key,
+                self.key,
                 Delta_Reweight(),
                 PrevN_ContextCodeExtractor(self.ctx_n),
             )
         elif self.mode == "gamma":
             self.warper = WatermarkLogitsProcessor(
-                self.private_key,
+                self.key,
                 Gamma_Reweight(self.gamma),
                 PrevN_ContextCodeExtractor(self.ctx_n),
             )
@@ -318,7 +333,7 @@ class UnbiasedWMDetector(WMDetectorBase):
     def _state_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
-            "private_key": self.private_key,
+            "private_key": self.key,
             "gamma": self.gamma,
             "ctx_n": self.ctx_n,
         }
