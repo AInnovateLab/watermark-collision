@@ -1,6 +1,7 @@
 """
 A wrapper class for watermark generator.
 """
+import os
 from abc import ABC, abstractmethod
 from typing import Any, Literal
 
@@ -176,9 +177,13 @@ class SIRWMGenerator(WMGeneratorBase):
         model: GenerationMixin | Any,
         tokenizer: PreTrainedTokenizer | Any,
         key: int,
+        mode: Literal["window", "context"],
         window_size: int,
         gamma: float,
         delta: float,
+        chunk_size: int,
+        transform_model_path: str,
+        embedding_model: str,
         *args,
         **kwargs,
     ) -> None:
@@ -186,17 +191,37 @@ class SIRWMGenerator(WMGeneratorBase):
         self.window_size = window_size
         self.gamma = gamma
         self.delta = delta
+        self.chunk_size = chunk_size
+        self.transform_model_path = os.path.join(os.path.dirname(__file__), transform_model_path)
+        self.embedding_model = embedding_model
 
-        from robust_watermark.watermark import WatermarkLogitsProcessor, WatermarkWindow
-
-        self.watermark_model = WatermarkWindow(
-            device=self.model.device,
-            window_size=self.window_size,
-            target_tokenizer=self.tokenizer,
-            gamma=self.gamma,
-            delta=self.delta,
-            hash_key=self.key,
+        from robust_watermark.watermark import (
+            WatermarkContext,
+            WatermarkLogitsProcessor,
+            WatermarkWindow,
         )
+
+        if mode == "window":
+            self.watermark_model = WatermarkWindow(
+                device=self.model.device,
+                window_size=self.window_size,
+                target_tokenizer=self.tokenizer,
+                gamma=self.gamma,
+                delta=self.delta,
+                hash_key=self.key,
+            )
+        elif mode == "context":
+            self.watermark_model = WatermarkContext(
+                device=self.model.device,
+                chunk_size=self.chunk_size,
+                tokenizer=self.tokenizer,
+                gamma=self.gamma,
+                delta=self.delta,
+                transform_model_path=self.transform_model_path,
+                embedding_model=self.embedding_model,
+            )
+        else:
+            raise
         self.logits_processor = WatermarkLogitsProcessor(self.watermark_model)
 
     def generate(

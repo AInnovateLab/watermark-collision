@@ -165,3 +165,4 @@ wm_text*/
 
 # All test files
 test*
+*.pth
