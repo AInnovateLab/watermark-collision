@@ -15,18 +15,19 @@
 # limitations under the License.
 
 from __future__ import annotations
+
 import collections
-from math import sqrt
-from itertools import chain, tee
 from functools import lru_cache
+from itertools import chain, tee
+from math import sqrt
 
 import scipy.stats
 import torch
+from alternative_prf_schemes import prf_lookup, seeding_scheme_lookup
 from tokenizers import Tokenizer
 from transformers import LogitsProcessor
 
-from normalizers import normalization_strategy_lookup
-from alternative_prf_schemes import prf_lookup, seeding_scheme_lookup
+from .normalizers import normalization_strategy_lookup
 
 
 class WatermarkBase:
@@ -59,15 +60,21 @@ class WatermarkBase:
     def _initialize_seeding_scheme(self, seeding_scheme: str) -> None:
         """Initialize all internal settings of the seeding strategy from a colloquial, "public" name for the scheme."""
         # print(self.hash_key)
-        self.prf_type, self.context_width, self.self_salt, self.hash_key = seeding_scheme_lookup(seeding_scheme, self.hash_key)
+        self.prf_type, self.context_width, self.self_salt, self.hash_key = seeding_scheme_lookup(
+            seeding_scheme, self.hash_key
+        )
 
     def _seed_rng(self, input_ids: torch.LongTensor) -> None:
         """Seed RNG from local context. Not batched, because the generators we use (like cuda.random) are not batched."""
         # Need to have enough context for seed generation
         if input_ids.shape[-1] < self.context_width:
-            raise ValueError(f"seeding_scheme requires at least a {self.context_width} token prefix to seed the RNG.")
+            raise ValueError(
+                f"seeding_scheme requires at least a {self.context_width} token prefix to seed the RNG."
+            )
 
-        prf_key = prf_lookup[self.prf_type](input_ids[-self.context_width :], salt_key=self.hash_key)
+        prf_key = prf_lookup[self.prf_type](
+            input_ids[-self.context_width :], salt_key=self.hash_key
+        )
         # enable for long, interesting streams of pseudorandom numbers: print(prf_key)
         self.rng.manual_seed(prf_key % (2**64 - 1))  # safeguard against overflow from long
 
@@ -76,11 +83,15 @@ class WatermarkBase:
         self._seed_rng(input_ids)
 
         greenlist_size = int(self.vocab_size * self.gamma)
-        vocab_permutation = torch.randperm(self.vocab_size, device=input_ids.device, generator=self.rng)
+        vocab_permutation = torch.randperm(
+            self.vocab_size, device=input_ids.device, generator=self.rng
+        )
         if self.select_green_tokens:  # directly
             greenlist_ids = vocab_permutation[:greenlist_size]  # new
         else:  # select green via red
-            greenlist_ids = vocab_permutation[(self.vocab_size - greenlist_size) :]  # legacy behavior
+            greenlist_ids = vocab_permutation[
+                (self.vocab_size - greenlist_size) :
+            ]  # legacy behavior
         return greenlist_ids
 
 
@@ -129,7 +140,9 @@ class WatermarkLogitsProcessor(WatermarkBase, LogitsProcessor):
         sum_renormed_probs = renormed_probs.sum()
         return sum_renormed_probs
 
-    def _calc_greenlist_mask(self, scores: torch.FloatTensor, greenlist_token_ids) -> torch.BoolTensor:
+    def _calc_greenlist_mask(
+        self, scores: torch.FloatTensor, greenlist_token_ids
+    ) -> torch.BoolTensor:
         # Cannot lose loop, greenlists might have different lengths
         green_tokens_mask = torch.zeros_like(scores, dtype=torch.bool)
         for b_idx, greenlist in enumerate(greenlist_token_ids):
@@ -137,11 +150,15 @@ class WatermarkLogitsProcessor(WatermarkBase, LogitsProcessor):
                 green_tokens_mask[b_idx][greenlist] = True
         return green_tokens_mask
 
-    def _bias_greenlist_logits(self, scores: torch.Tensor, greenlist_mask: torch.Tensor, greenlist_bias: float) -> torch.Tensor:
+    def _bias_greenlist_logits(
+        self, scores: torch.Tensor, greenlist_mask: torch.Tensor, greenlist_bias: float
+    ) -> torch.Tensor:
         scores[greenlist_mask] = scores[greenlist_mask] + greenlist_bias
         return scores
 
-    def _score_rejection_sampling(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, tail_rule="fixed_compute") -> list[int]:
+    def _score_rejection_sampling(
+        self, input_ids: torch.LongTensor, scores: torch.FloatTensor, tail_rule="fixed_compute"
+    ) -> list[int]:
         """Generate greenlist based on current candidate next token. Reject and move on if necessary. Method not batched.
         This is only a partial version of Alg.3 "Robust Private Watermarking", as it always assumes greedy sampling. It will still (kinda)
         work for all types of sampling, but less effectively.
@@ -152,7 +169,9 @@ class WatermarkLogitsProcessor(WatermarkBase, LogitsProcessor):
 
         final_greenlist = []
         for idx, prediction_candidate in enumerate(greedy_predictions):
-            greenlist_ids = self._get_greenlist_ids(torch.cat([input_ids, prediction_candidate[None]], dim=0))  # add candidate to prefix
+            greenlist_ids = self._get_greenlist_ids(
+                torch.cat([input_ids, prediction_candidate[None]], dim=0)
+            )  # add candidate to prefix
             if prediction_candidate in greenlist_ids:  # test for consistency
                 final_greenlist.append(prediction_candidate)
 
@@ -194,8 +213,12 @@ class WatermarkLogitsProcessor(WatermarkBase, LogitsProcessor):
                     self.spike_entropies = [[] for _ in range(input_ids.shape[0])]
                 self.spike_entropies[b_idx].append(self._compute_spike_entropy(scores[b_idx]))
 
-        green_tokens_mask = self._calc_greenlist_mask(scores=scores, greenlist_token_ids=list_of_greenlist_ids)
-        scores = self._bias_greenlist_logits(scores=scores, greenlist_mask=green_tokens_mask, greenlist_bias=self.delta)
+        green_tokens_mask = self._calc_greenlist_mask(
+            scores=scores, greenlist_token_ids=list_of_greenlist_ids
+        )
+        scores = self._bias_greenlist_logits(
+            scores=scores, greenlist_mask=green_tokens_mask, greenlist_bias=self.delta
+        )
 
         return scores
 
@@ -281,7 +304,9 @@ class WatermarkDetector(WatermarkBase):
         # if passed return_prediction then perform the hypothesis test and return the outcome
         if return_prediction:
             z_threshold = z_threshold if z_threshold else self.z_threshold
-            assert z_threshold is not None, "Need a threshold in order to decide outcome of detection test"
+            assert (
+                z_threshold is not None
+            ), "Need a threshold in order to decide outcome of detection test"
             output_dict["prediction"] = False
 
         return output_dict
@@ -314,7 +339,9 @@ class WatermarkDetector(WatermarkBase):
             )
 
         # Compute scores for all ngrams contexts in the passage:
-        token_ngram_generator = ngrams(input_ids.cpu().tolist(), self.context_width + 1 - self.self_salt)
+        token_ngram_generator = ngrams(
+            input_ids.cpu().tolist(), self.context_width + 1 - self.self_salt
+        )
         frequencies_table = collections.Counter(token_ngram_generator)
         ngram_to_watermark_lookup = {}
         for idx, ngram_example in enumerate(frequencies_table.keys()):
@@ -365,7 +392,9 @@ class WatermarkDetector(WatermarkBase):
         return_p_value: bool = True,
     ):
         ngram_to_watermark_lookup, frequencies_table = self._score_ngrams_in_passage(input_ids)
-        green_token_mask, green_unique, offsets = self._get_green_at_T_booleans(input_ids, ngram_to_watermark_lookup)
+        green_token_mask, green_unique, offsets = self._get_green_at_T_booleans(
+            input_ids, ngram_to_watermark_lookup
+        )
 
         # Count up scores over all ngrams
         if self.ignore_repeated_ngrams:
@@ -379,7 +408,12 @@ class WatermarkDetector(WatermarkBase):
         else:
             num_tokens_scored = sum(frequencies_table.values())
             assert num_tokens_scored == len(input_ids) - self.context_width + self.self_salt
-            green_token_count = sum(freq * outcome for freq, outcome in zip(frequencies_table.values(), ngram_to_watermark_lookup.values()))
+            green_token_count = sum(
+                freq * outcome
+                for freq, outcome in zip(
+                    frequencies_table.values(), ngram_to_watermark_lookup.values()
+                )
+            )
         assert green_token_count == green_unique.sum()
 
         # HF-style output dictionary
@@ -391,7 +425,9 @@ class WatermarkDetector(WatermarkBase):
         if return_green_fraction:
             score_dict.update(dict(green_fraction=(green_token_count / num_tokens_scored)))
         if return_z_score:
-            score_dict.update(dict(z_score=self._compute_z_score(green_token_count, num_tokens_scored)))
+            score_dict.update(
+                dict(z_score=self._compute_z_score(green_token_count, num_tokens_scored))
+            )
         if return_p_value:
             z_score = score_dict.get("z_score")
             if z_score is None:
@@ -427,7 +463,9 @@ class WatermarkDetector(WatermarkBase):
         #    naive_count_correction=True is a partial remedy to this
 
         ngram_to_watermark_lookup, frequencies_table = self._score_ngrams_in_passage(input_ids)
-        green_mask, green_ids, offsets = self._get_green_at_T_booleans(input_ids, ngram_to_watermark_lookup)
+        green_mask, green_ids, offsets = self._get_green_at_T_booleans(
+            input_ids, ngram_to_watermark_lookup
+        )
         len_full_context = len(green_ids)
 
         partial_sum_id_table = torch.cumsum(green_ids, dim=0)
@@ -463,7 +501,9 @@ class WatermarkDetector(WatermarkBase):
                 z_score_max_per_window[idx] = maximal_z_score
 
                 z_score_at_effective_T = torch.cummax(batched_z_score, dim=0)[0]
-                cumulative_eff_z_score[size::s] = torch.maximum(cumulative_eff_z_score[size::s], z_score_at_effective_T[:-1])
+                cumulative_eff_z_score[size::s] = torch.maximum(
+                    cumulative_eff_z_score[size::s], z_score_at_effective_T[:-1]
+                )
                 window_fits = True  # successful computation for any window in sizes
 
         if not window_fits:
@@ -545,9 +585,13 @@ class WatermarkDetector(WatermarkBase):
     ) -> dict:
         """Scores a given string of text and returns a dictionary of results."""
 
-        assert (text is not None) ^ (tokenized_text is not None), "Must pass either the raw or tokenized string"
+        assert (text is not None) ^ (
+            tokenized_text is not None
+        ), "Must pass either the raw or tokenized string"
         if return_prediction:
-            kwargs["return_p_value"] = True  # to return the "confidence":=1-p of positive detections
+            kwargs[
+                "return_p_value"
+            ] = True  # to return the "confidence":=1-p of positive detections
 
         # run optional normalizers on text
         for normalizer in self.normalizers:
@@ -561,7 +605,9 @@ class WatermarkDetector(WatermarkBase):
                 "requires an instance of the tokenizer ",
                 "that was used at generation time.",
             )
-            tokenized_text = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)["input_ids"][0].to(self.device)
+            tokenized_text = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)[
+                "input_ids"
+            ][0].to(self.device)
             if tokenized_text[0] == self.tokenizer.bos_token_id:
                 tokenized_text = tokenized_text[1:]
         else:
@@ -588,7 +634,9 @@ class WatermarkDetector(WatermarkBase):
         # if passed return_prediction then perform the hypothesis test and return the outcome
         if return_prediction:
             z_threshold = z_threshold if z_threshold else self.z_threshold
-            assert z_threshold is not None, "Need a threshold in order to decide outcome of detection test"
+            assert (
+                z_threshold is not None
+            ), "Need a threshold in order to decide outcome of detection test"
             output_dict["prediction"] = score_dict["z_score"] > z_threshold
             if output_dict["prediction"]:
                 output_dict["confidence"] = 1 - score_dict["p_value"]

@@ -6,11 +6,14 @@ it represents our best effort at the time of writing.
 These normalizers can be used as stand-alone normalizers. They could be made to conform to HF tokenizers standard, but that would
 require messing with the limited rust interface of tokenizers.NormalizedString
 """
+import os
+import re
+import sys
+import unicodedata
 from collections import defaultdict
 from functools import cache
 
-import re
-import unicodedata
+sys.path.append(os.path.dirname(__file__))
 import homoglyphs as hg
 
 
@@ -171,8 +174,8 @@ class TrueCaser:
             self.nlp = spacy.load("en_core_web_sm")
             self.normalize_fn = self._spacy_truecasing
         else:
-            from nltk import pos_tag, word_tokenize  # noqa
             import nltk
+            from nltk import pos_tag, word_tokenize  # noqa
 
             nltk.download("punkt")
             nltk.download("averaged_perceptron_tagger")
@@ -195,8 +198,8 @@ class TrueCaser:
         return truecased_str
 
     def _nltk_truecasing(self, random_capitalized_string: str):
-        from nltk import pos_tag, word_tokenize
         import nltk
+        from nltk import pos_tag, word_tokenize
 
         nltk.download("punkt")
         nltk.download("averaged_perceptron_tagger")

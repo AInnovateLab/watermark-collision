@@ -1,14 +1,8 @@
-import os
-import sys
-
-sys.path.append("/home/lyy/workspace/Watermark/watermarking")
 import argparse
-import json
+import os
 import pathlib
 
 import jsonlines
-from datasets import load_dataset
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, LogitsProcessorList
 
@@ -76,33 +70,32 @@ class Rephrase:
             )
 
         elif self.args.watermark_name == "SIR":
-            # from robust_watermark.watermark import WatermarkWindow
-
-            # self.watermark_detector_new = WatermarkWindow(
-            #     device=self.model.device,
-            #     window_size=0,
-            #     gamma=self.settings["gamma"],
-            #     delta=self.args.new_delta,
-            #     target_tokenizer=self.tokenizer,
-            # )
-            # self.watermark_processor = WatermarkLogitsProcessor(self.watermark_detector_new)
-
-            # self.watermark_detector_original = WatermarkWindow(
-            #     device=self.model.device,
-            #     window_size=0,
-            #     gamma=self.settings["gamma"],
-            #     delta=self.settings["delta"],
-            #     target_tokenizer=self.tokenizer,
-            # )
             self.generator = WMG.SIRWMGenerator(
                 model=self.model,
                 tokenizer=self.tokenizer,
-                window_size=0,  # TODO
+                window_size=0,
                 gamma=self.settings["gamma"],
                 delta=self.args.new_delta,
+                hash_key=self.args.hash_key,
             )
-            # TODO: detector
-            raise NotImplementedError
+            self.detector_origin = WMD.SIRWMDetector(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                window_size=0,
+                gamma=self.settings["gamma"],  # should match original setting
+                delta=self.settings["delta"],  # should match original setting
+                hash_key=self.settings["hash_key"],
+                z_threshold=4.0,
+            )
+            self.detector_new = WMD.SIRWMDetector(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                window_size=0,
+                gamma=self.settings["gamma"],  # should match original setting
+                delta=self.args.new_delta,  # should match args setting
+                hash_key=self.args.hash_key,
+                z_threshold=4.0,
+            )
 
     def add_prompt(self, input_data):
         return f"""<<SYS>>\nAssume you are a helpful assistant.\nYou job is to paraphase the given text.\n<</SYS>>\n[INST]\n{input_data}\n[/INST]\nYou're welcome! Here's a paraphrased version of the original message:\n"""

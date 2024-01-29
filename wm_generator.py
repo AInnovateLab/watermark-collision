@@ -41,10 +41,10 @@ class WMGeneratorBase(ABC):
         """
         Convert input_ids to text. Automatically handle batched or non-batched input_ids.
         """
-        if input_ids.dim() == 2:
+        if input_ids.dim() == 1:
             # not batched
             return self.tokenizer.decode(input_ids, skip_special_tokens=True)
-        elif input_ids.dim() == 3:
+        elif input_ids.dim() == 2:
             # batched
             assert input_ids.size(0) == 1, "batch size must be 1."
             return self.tokenizer.decode(input_ids.squeeze(0), skip_special_tokens=True)
@@ -68,14 +68,14 @@ class WMGeneratorBase(ABC):
 
     @staticmethod
     def prepare_batched_input(input_ids: torch.LongTensor) -> torch.LongTensor:
-        if input_ids.dim() == 2:
+        if input_ids.dim() == 1:
             # not batched
             return input_ids.unsqueeze(0)
-        elif input_ids.dim() == 3:
+        elif input_ids.dim() == 2:
             # batched
             return input_ids
         else:
-            raise ValueError("input_ids must be 2D or 3D tensor.")
+            raise ValueError("input_ids must be 1D or 2D tensor.")
 
 
 #############
@@ -100,7 +100,7 @@ class KGWWMGenerator(WMGeneratorBase):
         seeding_scheme: str,
         hash_key: int,
         *args,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(model, tokenizer, *args, **kwargs)
         self.gamma = gamma
@@ -175,7 +175,7 @@ class SIRWMGenerator(WMGeneratorBase):
         delta: float,
         hash_key: int,
         *args,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(model, tokenizer, *args, **kwargs)
         self.window_size = window_size
@@ -183,10 +183,17 @@ class SIRWMGenerator(WMGeneratorBase):
         self.delta = delta
         self.hash_key = hash_key
 
-        from robust_watermark.watermark import WatermarkWindow
+        from robust_watermark.watermark import WatermarkLogitsProcessor, WatermarkWindow
 
-        # TODO
-        raise NotImplementedError
+        self.watermark_model = WatermarkWindow(
+            device=self.model.device,
+            window_size=self.window_size,
+            target_tokenizer=self.tokenizer,
+            gamma=self.gamma,
+            delta=self.delta,
+            hash_key=self.hash_key,
+        )
+        self.logits_processor = WatermarkLogitsProcessor(self.watermark_model)
 
     def generate(
         self, input_ids: torch.LongTensor, *args, truncate_output: bool = True, **kwargs
@@ -198,7 +205,21 @@ class SIRWMGenerator(WMGeneratorBase):
             input_ids (torch.LongTensor): input_ids to be watermarked.
             truncate_output (bool): whether to truncate the output to the newly created tokens.
         """
-        raise NotImplementedError
+        input_ids = self.prepare_batched_input(input_ids)
+        # generate watermark tokens
+        output_tokens = self.model.generate(
+            input_ids,
+            *args,
+            logits_processor=LogitsProcessorList([self.logits_processor]),
+            **kwargs,
+        )
+
+        # if decoder only model, then we need to isolate the
+        # newly generated tokens as only those are watermarked, the input/prompt is not
+        if truncate_output:
+            output_tokens = output_tokens[:, input_ids.shape[-1] :]
+
+        return output_tokens
 
     def _state_dict(self) -> dict[str, Any]:
         return {

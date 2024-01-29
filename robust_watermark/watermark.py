@@ -9,8 +9,9 @@ import jieba
 import numpy as np
 import scipy.stats
 import torch
-from train_watermark_model import TransformModel
 from transformers import AutoTokenizer, BertModel, LogitsProcessor
+
+from .train_watermark_model import TransformModel
 
 
 class WatermarkBase:
