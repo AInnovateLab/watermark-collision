@@ -1,7 +1,7 @@
 import argparse
 import logging
 import os
-import pathlib
+from pathlib import Path
 
 import jsonlines
 from datasets import load_dataset
@@ -80,10 +80,27 @@ class Watermarking:
         Using the LM the continue writing and save the output text.
         """
         # output I/O
-        os.makedirs(self.args.output_dir, exist_ok=True)
-        file_path = pathlib.Path(self.args.output_dir) / self.args.output_file
-        logging.info(f"Saving results to {file_path}")
+        if self.args.output_file:
+            file_path = Path(self.args.output_file)
+        elif self.args.output_dir:
+            file_path = Path(self.args.output_dir)
+            file_path.mkdir(parents=True, exist_ok=True)
+            # automatic naming
+            generator_filename = Path(self.args.generator_file).stem
+            detector_filename = Path(self.args.detector_file).stem
+            file_path = file_path / f"{generator_filename}__{detector_filename}.jsonl"
+        else:
+            raise argparse.ArgumentError(
+                None, "Either --output-file or --output-dir must be specified."
+            )
 
+        if file_path.exists():
+            logging.warning(f"Output file exists: {file_path}")
+            override_input = input("Output file exists. Do you want to overwrite? (y/n):")
+            if "y" not in override_input.lower():
+                logging.info("Aborting.")
+                return
+        logging.info(f"Saving results to {file_path}")
         # generate kwargs
         generate_kwargs = {
             "truncate_output": True,
@@ -97,7 +114,7 @@ class Watermarking:
         generate_kwargs.update(self.generator_config.get("generate_kwargs", {}))
 
         with jsonlines.open(file_path, mode="w") as writer, tqdm(
-            total=self.args.max_valid, desc="Valid samples"
+            total=self.args.max_valid, desc="Valid samples", dynamic_ncols=True
         ) as pbar:
             writer.write(vars(self.args))
             valid_num = 0
@@ -142,8 +159,17 @@ def parse():
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--key", type=int, default=2024)
     # I/O
-    parser.add_argument("--output-file", type=str, default="wm_text.jsonl")
-    parser.add_argument("--output-dir", type=str, default="wm_text")
+    output_ex_group = parser.add_mutually_exclusive_group(required=True)
+    output_ex_group.add_argument(
+        "--output-dir",
+        type=str,
+        help="Output directory. If specified, enable automatic naming from the yaml file of gneerator and detector.",
+    )
+    output_ex_group.add_argument(
+        "--output-file",
+        type=str,
+        help="Output file name. If specified, disable the automatic naming and ignore the --output-dir setting.",
+    )
     return parser.parse_args()
 
 

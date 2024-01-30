@@ -1,7 +1,7 @@
 import argparse
+import hashlib
 import logging
-import os
-import pathlib
+from pathlib import Path
 
 import jsonlines
 from omegaconf import OmegaConf
@@ -34,7 +34,7 @@ class Rephrase:
             self.args.model_name_or_path, device_map=0, trust_remote_code=True, revision="main"
         )
 
-        file_path = pathlib.Path(self.args.input_dir) / self.args.input_file
+        file_path = self.args.input_file
         logging.info(f"Loading data from: {file_path}")
         with jsonlines.open(file_path, "r") as reader:
             self.settings = reader.read()
@@ -95,8 +95,36 @@ You're welcome! Here's a paraphrased version of the original message:
         Using the LM the continue writing and save the output text.
         """
         # output I/O
-        os.makedirs(self.args.output_dir, exist_ok=True)
-        file_path = pathlib.Path(self.args.output_dir) / self.args.output_file
+        # os.makedirs(self.args.output_dir, exist_ok=True)
+        # file_path = pathlib.Path(self.args.output_dir) / self.args.output_file
+        if self.args.output_file:
+            file_path = Path(self.args.output_file)
+        elif self.args.output_dir:
+            file_path = Path(self.args.output_dir)
+            file_path.mkdir(parents=True, exist_ok=True)
+            # automatic naming
+            input_filename_hash = hashlib.md5(
+                Path(self.args.input_file).stem.encode("utf-8")
+            ).hexdigest()
+            input_filename_hash = input_filename_hash[:8]
+            rephraser_filename = Path(self.args.rephraser_file).stem
+            detector_old_filename = Path(self.args.old_detector_file).stem
+            detector_new_filename = Path(self.args.new_detector_file).stem
+            file_path = (
+                file_path
+                / f"{input_filename_hash}@{rephraser_filename}__{detector_old_filename}__{detector_new_filename}.jsonl"
+            )
+        else:
+            raise argparse.ArgumentError(
+                None, "Either --output-file or --output-dir must be specified."
+            )
+
+        if file_path.exists():
+            logging.warning(f"Output file exists: {file_path}")
+            override_input = input("Output file exists. Do you want to overwrite? (y/n):")
+            if "y" not in override_input.lower():
+                logging.info("Aborting.")
+                return
         logging.info(f"Saving results to {file_path}")
 
         # generate kwargs
@@ -113,7 +141,7 @@ You're welcome! Here's a paraphrased version of the original message:
             # writer.write(self.settings)
             writer.write({"args": vars(self.args), "settings": self.settings})
 
-            for datum in tqdm(self.data):
+            for datum in tqdm(self.data, dynamic_ncols=True):
                 input_text = self.add_prompt(datum["generated_text"])
                 input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.cuda()
 
@@ -140,12 +168,14 @@ def parse():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--model-name-or-path", type=str, default="TheBloke/Llama-2-7B-GPTQ")
     # Generator/Detector loading
-    parser.add_argument("--rephraser-file", type=str, required=True, help="Yaml file for rephraser")
     parser.add_argument(
-        "--old-detector-file", type=str, required=True, help="Yaml file for old detector"
+        "--rephraser-file", type=str, required=True, help="Yaml file for rephraser."
     )
     parser.add_argument(
-        "--new-detector-file", type=str, required=True, help="Yaml file for new detector"
+        "--old-detector-file", type=str, required=True, help="Yaml file for old detector."
+    )
+    parser.add_argument(
+        "--new-detector-file", type=str, required=True, help="Yaml file for new detector."
     )
     # generate kwargs
     parser.add_argument("--max-new-tokens", type=int, default=128)
@@ -154,11 +184,19 @@ def parse():
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--new-key", type=int, default=2024)
     # I/O
-    parser.add_argument("--input-file", type=str, default="wm_text.jsonl")
-    parser.add_argument("--input-dir", type=str, default="wm_text")
-    parser.add_argument("--output-file", type=str, default="wm_text.jsonl")
-    parser.add_argument("--output-dir", type=str, default="wm_text_rephrased")
+    parser.add_argument("--input-file", type=str, required=True, help="Path to input file.")
     parser.add_argument("--use-wm", action="store_true", default=False)
+    output_ex_group = parser.add_mutually_exclusive_group(required=True)
+    output_ex_group.add_argument(
+        "--output-dir",
+        type=str,
+        help="Output directory. If specified, enable automatic naming from the yaml file of gneerator and detector.",
+    )
+    output_ex_group.add_argument(
+        "--output-file",
+        type=str,
+        help="Output file name. If specified, disable the automatic naming and ignore the --output-dir setting.",
+    )
     return parser.parse_args()
 
 

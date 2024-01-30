@@ -10,14 +10,14 @@ import torch
 from transformers import AutoModelForCausalLM, PreTrainedTokenizer
 
 
-def get_detector_class_from_type(type: Literal["KGW", "SIR", "unbiased"]) -> Type["WMDetectorBase"]:
+def get_detector_class_from_type(type: Literal["KGW", "SIR", "UBW"]) -> Type["WMDetectorBase"]:
     match type:
         case "KGW":
             return KGWWMDetector
         case "SIR":
             return SIRWMDetector
         case "unbiased":
-            return UnbiasedWMDetector
+            return UBWWMDetector
         case _:
             raise ValueError(f"Invalid type: {type}")
 
@@ -54,6 +54,8 @@ class WMDetectorBase(ABC):
     """
     Abstract base class for watermark detector.
     """
+
+    TYPE = "base"
 
     def __init__(
         self,
@@ -126,6 +128,8 @@ class KGWWMDetector(WMDetectorBase):
     Wrapper class for KGW watermark detector.
     """
 
+    TYPE = "KGW"
+
     def __init__(
         self,
         model: AutoModelForCausalLM | Any,
@@ -196,6 +200,8 @@ class SIRWMDetector(WMDetectorBase):
     Wrapper class for SIR watermark detector.
     """
 
+    TYPE = "SIR"
+
     def __init__(
         self,
         model: AutoModelForCausalLM | Any,
@@ -262,12 +268,14 @@ class SIRWMDetector(WMDetectorBase):
 #    Unbias    #
 #              #
 ################
-class UnbiasedWMDetector(WMDetectorBase):
+class UBWWMDetector(WMDetectorBase):
     """
     Wrapper class for Unbiased watermark detector.
     Ref:
         Unbiased Watermark for Large Language Models. https://arxiv.org/abs/2310.10669
     """
+
+    TYPE = "UBW"
 
     def __init__(
         self,

@@ -162,6 +162,7 @@ cython_debug/
 # All generated data should be ignored
 wm_text*/
 *.jsonl
+results/
 
 # All test files
 test*

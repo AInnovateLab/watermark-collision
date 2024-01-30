@@ -9,16 +9,14 @@ import torch
 from transformers import GenerationMixin, LogitsProcessorList, PreTrainedTokenizer
 
 
-def get_generator_class_from_type(
-    type: Literal["KGW", "SIR", "unbiased"]
-) -> Type["WMGeneratorBase"]:
+def get_generator_class_from_type(type: Literal["KGW", "SIR", "UBW"]) -> Type["WMGeneratorBase"]:
     match type:
         case "KGW":
             return KGWWMGenerator
         case "SIR":
             return SIRWMGenerator
-        case "unbiased":
-            return UnbiasedWMGenerator
+        case "UBW":
+            return UBWWMGenerator
         case _:
             raise ValueError(f"Invalid type: {type}")
 
@@ -32,6 +30,8 @@ class WMGeneratorBase(ABC):
     """
     Abstract base class for watermark generator.
     """
+
+    TYPE = "base"
 
     def __init__(
         self,
@@ -112,6 +112,8 @@ class KGWWMGenerator(WMGeneratorBase):
         Proceedings of the 40th International Conference on Machine Learning, in Proceedings of Machine Learning Research 202:17061-17084.
     """
 
+    TYPE = "KGW"
+
     def __init__(
         self,
         model: GenerationMixin | Any,
@@ -185,6 +187,8 @@ class SIRWMGenerator(WMGeneratorBase):
         Li, Y., Wang, X., Wang, Z., Zhang, Y., Liu, Q., & Wang, H. (2020). SIR: A Sentiment-Infused Recommender System.
         arXiv preprint arXiv:2008.13535.
     """
+
+    TYPE = "SIR"
 
     def __init__(
         self,
@@ -278,12 +282,14 @@ class SIRWMGenerator(WMGeneratorBase):
 #    Unbias    #
 #              #
 ################
-class UnbiasedWMGenerator(WMGeneratorBase):
+class UBWWMGenerator(WMGeneratorBase):
     """
     Wrapper class for unbiased watermark generator.
     Ref:
         Unbiased Watermark for Large Language Models. https://arxiv.org/abs/2310.10669
     """
+
+    TYPE = "UBW"
 
     def __init__(
         self,
