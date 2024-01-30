@@ -5,5 +5,5 @@ This repo is adapted from [A Semantic Invariant Robust (SIR) Watermark for Large
 Please run the follow code the download the model:
 ```shell
 cd robust_watermark
-wget https://github.com/THU-BPM/Robust_Watermark/blob/main/model/transform_model_cbert.pth
+wget https://github.com/THU-BPM/Robust_Watermark/raw/main/model/transform_model_cbert.pth
 ```
