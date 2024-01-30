@@ -1,6 +1,7 @@
 """
 A wrapper class for watermark generator.
 """
+
 import os
 from abc import ABC, abstractmethod
 from typing import Any, Literal, Type
@@ -199,7 +200,7 @@ class SIRWMGenerator(WMGeneratorBase):
         window_size: int,
         gamma: float,
         delta: float,
-        chunk_size: int,
+        chunk_length: int,
         transform_model_path: str,
         embedding_model: str,
         *args,
@@ -209,8 +210,10 @@ class SIRWMGenerator(WMGeneratorBase):
         self.window_size = window_size
         self.gamma = gamma
         self.delta = delta
-        self.chunk_size = chunk_size
-        self.transform_model_path = os.path.join(os.path.dirname(__file__), transform_model_path)
+        self.chunk_length = chunk_length
+        self.transform_model_path = os.path.join(
+            os.path.dirname(__file__), "robust_watermark", transform_model_path
+        )
         self.embedding_model = embedding_model
 
         from robust_watermark.watermark import (
@@ -231,15 +234,15 @@ class SIRWMGenerator(WMGeneratorBase):
         elif mode == "context":
             self.watermark_model = WatermarkContext(
                 device=self.model.device,
-                chunk_size=self.chunk_size,
-                tokenizer=self.tokenizer,
+                chunk_length=self.chunk_length,
+                target_tokenizer=self.tokenizer,
                 gamma=self.gamma,
                 delta=self.delta,
                 transform_model_path=self.transform_model_path,
                 embedding_model=self.embedding_model,
             )
         else:
-            raise
+            raise ValueError(f"Invalid mode: {self.mode}")
         self.logits_processor = WatermarkLogitsProcessor(self.watermark_model)
 
     def generate(
@@ -252,21 +255,22 @@ class SIRWMGenerator(WMGeneratorBase):
             input_ids (torch.LongTensor): input_ids to be watermarked.
             truncate_output (bool): whether to truncate the output to the newly created tokens.
         """
-        input_ids = self.prepare_batched_input(input_ids)
-        # generate watermark tokens
-        output_tokens = self.model.generate(
-            input_ids,
-            *args,
-            logits_processor=LogitsProcessorList([self.logits_processor]),
-            **kwargs,
-        )
+        with torch.no_grad():
+            input_ids = self.prepare_batched_input(input_ids)
+            # generate watermark tokens
+            output_tokens = self.model.generate(
+                input_ids,
+                *args,
+                logits_processor=LogitsProcessorList([self.logits_processor]),
+                **kwargs,
+            )
 
-        # if decoder only model, then we need to isolate the
-        # newly generated tokens as only those are watermarked, the input/prompt is not
-        if truncate_output:
-            output_tokens = output_tokens[:, input_ids.shape[-1] :]
+            # if decoder only model, then we need to isolate the
+            # newly generated tokens as only those are watermarked, the input/prompt is not
+            if truncate_output:
+                output_tokens = output_tokens[:, input_ids.shape[-1] :]
 
-        return output_tokens
+            return output_tokens
 
     def _state_dict(self) -> dict[str, Any]:
         return {

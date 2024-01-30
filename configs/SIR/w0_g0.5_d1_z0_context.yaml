@@ -1,17 +1,19 @@
 generator:
+  type: "SIR"
   window_size: 0
   gamma: 0.5
   delta: 1.0
-  chunk_size: 10
+  chunk_length: 10
   mode: context
   transform_model_path: transform_model_cbert.pth
-  embedding_model: c-bert
+  embedding_model: perceptiveshawty/compositional-bert-large-uncased
 detector:
+  type: "SIR"
   window_size: 0
   gamma: 0.5
   delta: 1.0
-  chunk_size: 10
+  chunk_length: 10
   z_threshold: 0.0
   mode: context
   transform_model_path: transform_model_cbert.pth
-  embedding_model: c-bert
+  embedding_model: perceptiveshawty/compositional-bert-large-uncased

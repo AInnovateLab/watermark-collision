@@ -1,13 +1,16 @@
 """
 A wrapper class for watermark detector.
 """
+
 import dataclasses
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal, Type
 
+import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, PreTrainedTokenizer
+from transformers import AutoModelForCausalLM, GenerationMixin, PreTrainedTokenizer
 
 
 def get_detector_class_from_type(type: Literal["KGW", "SIR", "UBW"]) -> Type["WMDetectorBase"]:
@@ -38,6 +41,8 @@ class DetectResult:
                     continue
                 elif isinstance(v, float):
                     ret[k] = round(v, 4)
+                elif isinstance(v, np.bool_):
+                    ret[k] = bool(v)
                 else:
                     ret[k] = v
             return ret
@@ -204,13 +209,17 @@ class SIRWMDetector(WMDetectorBase):
 
     def __init__(
         self,
-        model: AutoModelForCausalLM | Any,
+        model: GenerationMixin | Any,
         tokenizer: PreTrainedTokenizer | Any,
         key: int,
+        mode: Literal["window", "context"],
         window_size: int,
         gamma: float,
         delta: float,
-        z_threshold: int = 0,
+        chunk_length: int,
+        transform_model_path: str,
+        embedding_model: str,
+        z_threshold: float = 0.0,
         *args,
         **kwargs,
     ) -> None:
@@ -218,18 +227,36 @@ class SIRWMDetector(WMDetectorBase):
         self.window_size = window_size
         self.gamma = gamma
         self.delta = delta
+        self.chunk_length = chunk_length
+        self.transform_model_path = os.path.join(
+            os.path.dirname(__file__), "robust_watermark", transform_model_path
+        )
+        self.embedding_model = embedding_model
         self.z_threshold = z_threshold
 
-        from robust_watermark.watermark import WatermarkWindow
+        from robust_watermark.watermark import WatermarkContext, WatermarkWindow
 
-        self.watermark_detector = WatermarkWindow(
-            device=self.model.device,
-            window_size=self.window_size,
-            gamma=self.gamma,
-            delta=self.delta,
-            target_tokenizer=self.tokenizer,
-            hash_key=self.key,
-        )
+        if mode == "window":
+            self.watermark_detector = WatermarkWindow(
+                device=self.model.device,
+                window_size=self.window_size,
+                target_tokenizer=self.tokenizer,
+                gamma=self.gamma,
+                delta=self.delta,
+                hash_key=self.key,
+            )
+        elif mode == "context":
+            self.watermark_detector = WatermarkContext(
+                device=self.model.device,
+                chunk_length=self.chunk_length,
+                target_tokenizer=self.tokenizer,
+                gamma=self.gamma,
+                delta=self.delta,
+                transform_model_path=self.transform_model_path,
+                embedding_model=self.embedding_model,
+            )
+        else:
+            raise ValueError(f"Invalid mode: {self.mode}")
 
     def detect_text(self, input_text):
         """
@@ -238,9 +265,10 @@ class SIRWMDetector(WMDetectorBase):
         Args:
             input_ids (torch.LongTensor): input_ids to be detected.
         """
-        raw_score = self.watermark_detector.detect(input_text)
-        prediction_result = raw_score > self.z_threshold
-        return DetectResult(z_score=raw_score, prediction=prediction_result)
+        with torch.no_grad():
+            raw_score = self.watermark_detector.detect(input_text)
+            prediction_result = raw_score > self.z_threshold
+            return DetectResult(z_score=raw_score, prediction=prediction_result)
 
     def detect_tokens(self, input_ids: torch.LongTensor, *args, **kwargs) -> DetectResult:
         """
@@ -249,9 +277,10 @@ class SIRWMDetector(WMDetectorBase):
         Args:
             input_ids (torch.LongTensor): input_ids to be detected.
         """
-        ids = self.prepare_unbatched_input(input_ids)
-        text = self.tokenizer.decode(ids, skip_special_tokens=True)
-        return self.detect_text(text)
+        with torch.no_grad():
+            ids = self.prepare_unbatched_input(input_ids)
+            text = self.tokenizer.decode(ids, skip_special_tokens=True)
+            return self.detect_text(text)
 
     def _state_dict(self) -> dict[str, Any]:
         return {
