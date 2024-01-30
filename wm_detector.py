@@ -4,6 +4,7 @@ A wrapper class for watermark detector.
 
 import dataclasses
 import os
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal, Type
@@ -13,14 +14,17 @@ import torch
 from transformers import AutoModelForCausalLM, GenerationMixin, PreTrainedTokenizer
 
 
-def get_detector_class_from_type(type: Literal["KGW", "SIR", "UBW"]) -> Type["WMDetectorBase"]:
+def get_detector_class_from_type(type: str) -> Type["WMDetectorBase"]:
     match type:
         case "KGW":
             return KGWWMDetector
         case "SIR":
             return SIRWMDetector
         case "UBW":
+            warnings.warn(f"UBW is not suitable for paraphrasing attacks.", DeprecationWarning)
             return UBWWMDetector
+        case "PRW":
+            return PRWWMDetector
         case _:
             raise ValueError(f"Invalid type: {type}")
 
@@ -190,7 +194,6 @@ class KGWWMDetector(WMDetectorBase):
         return {
             "gamma": self.gamma,
             "seeding_scheme": self.seeding_scheme,
-            "hash_key": self.key,
             "z_threshold": self.z_threshold,
         }
 
@@ -287,7 +290,6 @@ class SIRWMDetector(WMDetectorBase):
             "window_size": self.window_size,
             "gamma": self.gamma,
             "delta": self.delta,
-            "hash_key": self.key,
             "z_threshold": self.z_threshold,
         }
 
@@ -397,8 +399,73 @@ class UBWWMDetector(WMDetectorBase):
     def _state_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
-            "private_key": self.key,
             "gamma": self.gamma,
             "temperature": self.temperature,
             "ctx_n": self.ctx_n,
+        }
+
+
+#######################
+#                     #
+#    Unigram / PRW    #
+#                     #
+#######################
+class PRWWMDetector(WMDetectorBase):
+    """
+    Wrapper class for Unigram watermark detector.
+    """
+
+    TYPE = "PRW"
+
+    def __init__(
+        self,
+        model: AutoModelForCausalLM | Any,
+        tokenizer: PreTrainedTokenizer | Any,
+        key: int,
+        *args,
+        z_threshold: float = 6.0,
+        fraction: float = 0.5,
+        strength: float = 2.0,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, tokenizer, key, *args, **kwargs)
+        self.fraction = fraction
+        self.strength = strength
+        self.z_threshold = z_threshold
+
+        from unigram_watermark.gptwm import GPTWatermarkDetector
+
+        self.watermark_detector = GPTWatermarkDetector(
+            fraction=self.fraction,
+            strength=self.strength,
+            vocab_size=self.tokenizer.vocab_size,
+            watermark_key=int(self.key),
+        )
+
+    def detect_text(self, text: str, *args, **kwargs) -> DetectResult:
+        """
+        Detect watermark given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be detected.
+        """
+        ids = self.tokenizer(text, add_special_tokens=False, return_tensors="pt")["input_ids"]
+        return self.detect_tokens(ids)
+
+    def detect_tokens(self, input_ids: torch.LongTensor, *args, **kwargs) -> DetectResult:
+        """
+        Detect watermark given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be detected.
+        """
+        ids = self.prepare_unbatched_input(input_ids)
+        raw_score = self.watermark_detector.detect(ids.flatten().tolist())
+        return DetectResult(z_score=raw_score, prediction=raw_score > self.z_threshold)
+
+    def _state_dict(self) -> dict[str, Any]:
+        return {
+            "fraction": self.fraction,
+            "strength": self.strength,
+            "z_threshold": self.z_threshold,
         }

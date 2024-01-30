@@ -3,6 +3,7 @@ A wrapper class for watermark generator.
 """
 
 import os
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Literal, Type
 
@@ -10,14 +11,17 @@ import torch
 from transformers import GenerationMixin, LogitsProcessorList, PreTrainedTokenizer
 
 
-def get_generator_class_from_type(type: Literal["KGW", "SIR", "UBW"]) -> Type["WMGeneratorBase"]:
+def get_generator_class_from_type(type: str) -> Type["WMGeneratorBase"]:
     match type:
         case "KGW":
             return KGWWMGenerator
         case "SIR":
             return SIRWMGenerator
         case "UBW":
+            warnings.warn(f"UBW is not suitable for paraphrasing attacks.", DeprecationWarning)
             return UBWWMGenerator
+        case "PRW":
+            return PRWWMGenerator
         case _:
             raise ValueError(f"Invalid type: {type}")
 
@@ -78,6 +82,7 @@ class WMGeneratorBase(ABC):
             "model_class_name": self.model.__class__.__name__,
             "tokenizer_class_name": self.tokenizer.__class__.__name__,
             "model_type_name": self.model.config.model_type,
+            "key": self.key,
         }
 
     def state_dict(self) -> dict[str, Any]:
@@ -172,7 +177,6 @@ class KGWWMGenerator(WMGeneratorBase):
             "gamma": self.gamma,
             "delta": self.delta,
             "seeding_scheme": self.seeding_scheme,
-            "hash_key": self.key,
         }
 
 
@@ -276,7 +280,6 @@ class SIRWMGenerator(WMGeneratorBase):
             "window_size": self.window_size,
             "gamma": self.gamma,
             "delta": self.delta,
-            "hash_key": self.key,
         }
 
 
@@ -370,7 +373,76 @@ class UBWWMGenerator(WMGeneratorBase):
     def _state_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
-            "private_key": self.key,
             "gamma": self.gamma,
             "ctx_n": self.ctx_n,
+        }
+
+
+#######################
+#                     #
+#    Unigram / PRW    #
+#                     #
+#######################
+class PRWWMGenerator(WMGeneratorBase):
+    """
+    Wrapper class for Unigram watermark generator. https://arxiv.org/abs/2306.17439
+    Ref:
+        Zhao, X., Ananth, P., Li, L., & Wang, Y. X. (2023). Provable robust watermarking for ai-generated text. arXiv preprint arXiv:2306.17439.
+    """
+
+    TYPE = "PRW"
+
+    def __init__(
+        self,
+        model: GenerationMixin | Any,
+        tokenizer: PreTrainedTokenizer | Any,
+        key: int,
+        *args,
+        fraction: float = 0.5,
+        strength: float = 2.0,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, tokenizer, key, *args, **kwargs)
+        self.fraction = fraction
+        self.strength = strength
+
+        from unigram_watermark.gptwm import GPTWatermarkLogitsWarper
+
+        self.logits_processor = GPTWatermarkLogitsWarper(
+            fraction=self.fraction,
+            strength=self.strength,
+            vocab_size=self.tokenizer.vocab_size,
+            watermark_key=int(self.key),
+        )
+
+    def generate(
+        self, input_ids: torch.LongTensor, *args, truncate_output: bool = True, **kwargs
+    ) -> torch.LongTensor:
+        """
+        Generate watermark tokens given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be watermarked.
+            truncate_output (bool): whether to truncate the output to the newly created tokens.
+        """
+        input_ids = self.prepare_batched_input(input_ids)
+        # generate watermark tokens
+        output_tokens = self.model.generate(
+            input_ids,
+            *args,
+            logits_processor=LogitsProcessorList([self.logits_processor]),
+            **kwargs,
+        )
+
+        # if decoder only model, then we need to isolate the
+        # newly generated tokens as only those are watermarked, the input/prompt is not
+        if truncate_output:
+            output_tokens = output_tokens[:, input_ids.shape[-1] :]
+
+        return output_tokens
+
+    def _state_dict(self) -> dict[str, Any]:
+        return {
+            "fraction": self.fraction,
+            "strength": self.strength,
         }

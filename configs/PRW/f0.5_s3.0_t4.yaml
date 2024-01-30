@@ -1,0 +1,9 @@
+generator:
+  type: "PRW"
+  fraction: 0.5
+  strength: 3.0
+detector:
+  type: "PRW"
+  fraction: 0.5
+  strength: 3.0
+  z_threshold: 4.0
