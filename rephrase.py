@@ -95,8 +95,6 @@ You're welcome! Here's a paraphrased version of the original message:
         Using the LM the continue writing and save the output text.
         """
         # output I/O
-        # os.makedirs(self.args.output_dir, exist_ok=True)
-        # file_path = pathlib.Path(self.args.output_dir) / self.args.output_file
         if self.args.output_file:
             file_path = Path(self.args.output_file)
         elif self.args.output_dir:
@@ -121,7 +119,7 @@ You're welcome! Here's a paraphrased version of the original message:
 
         if file_path.exists():
             logging.warning(f"Output file exists: {file_path}")
-            override_input = input("Output file exists. Do you want to overwrite? (y/n):")
+            override_input = input("Output file exists. Do you want to overwrite? (y/[n]): ")
             if "y" not in override_input.lower():
                 logging.info("Aborting.")
                 return

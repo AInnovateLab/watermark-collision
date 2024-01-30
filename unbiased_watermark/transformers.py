@@ -5,7 +5,7 @@ import torch
 from torch import FloatTensor, LongTensor
 from transformers import LogitsProcessor
 
-from .base import AbstractReweight, AbstractContextCodeExtractor, AbstractScore
+from .base import AbstractContextCodeExtractor, AbstractReweight, AbstractScore
 
 
 class WatermarkLogitsProcessor(LogitsProcessor):
@@ -56,13 +56,9 @@ class WatermarkLogitsProcessor(LogitsProcessor):
 
     def _core(self, input_ids: LongTensor, scores: FloatTensor):
         mask, seeds = self._get_codes(input_ids)
-        rng = [
-            torch.Generator(device=scores.device).manual_seed(seed) for seed in seeds
-        ]
+        rng = [torch.Generator(device=scores.device).manual_seed(seed) for seed in seeds]
         mask = torch.tensor(mask, device=scores.device)
-        watermark_code = self.reweight.watermark_code_type.from_random(
-            rng, scores.size(1)
-        )
+        watermark_code = self.reweight.watermark_code_type.from_random(rng, scores.size(1))
         reweighted_scores = self.reweight.reweight_logits(watermark_code, scores)
         return mask, reweighted_scores
 
@@ -80,25 +76,19 @@ class WatermarkLogitsProcessor(LogitsProcessor):
         new_logits: FloatTensor,
         scorer,
     ) -> FloatTensor:
-        from unbiased_watermark import (
-            RobustLLR_Score_Batch_v1,
-            RobustLLR_Score_Batch_v2,
-        )
+        from unbiased_watermark import RobustLLR_Score_Batch_v1, RobustLLR_Score_Batch_v2
 
         if isinstance(scorer, RobustLLR_Score_Batch_v1):
             all_scores = scorer.score(old_logits, new_logits)
             query_ids = labels.unsqueeze(-1).expand(
-                tuple(-1 for _ in range(decoder_input_ids.ndim))
-                + (all_scores.size(-2),)
+                tuple(-1 for _ in range(decoder_input_ids.ndim)) + (all_scores.size(-2),)
             )
             #  scores: [batch_size, query_size]
             scores = torch.gather(all_scores, -1, query_ids.unsqueeze(-1)).squeeze(-1)
         elif isinstance(scorer, RobustLLR_Score_Batch_v2):
             llr, max_llr, min_llr = scorer.score(old_logits, new_logits)
             query_ids = labels
-            unclipped_scores = torch.gather(llr, -1, query_ids.unsqueeze(-1)).squeeze(
-                -1
-            )
+            unclipped_scores = torch.gather(llr, -1, query_ids.unsqueeze(-1)).squeeze(-1)
             #  scores: [batch_size, query_size]
             scores = torch.clamp(unclipped_scores.unsqueeze(-1), min_llr, max_llr)
         return scores
@@ -113,9 +103,7 @@ class WatermarkLogitsProcessor(LogitsProcessor):
             self.reweight
         ), "Reweight does not support likelihood agnostic detection"
         mask, seeds = self._get_codes(input_ids)
-        rng = [
-            torch.Generator(device=input_ids.device).manual_seed(seed) for seed in seeds
-        ]
+        rng = [torch.Generator(device=input_ids.device).manual_seed(seed) for seed in seeds]
         mask = torch.tensor(mask, device=input_ids.device)
         watermark_code = self.reweight.watermark_code_type.from_random(rng, vocab_size)
         all_scores = self.reweight.get_la_score(watermark_code)

@@ -19,7 +19,7 @@ def get_detector_class_from_type(type: Literal["KGW", "SIR", "UBW"]) -> Type["WM
             return KGWWMDetector
         case "SIR":
             return SIRWMDetector
-        case "unbiased":
+        case "UBW":
             return UBWWMDetector
         case _:
             raise ValueError(f"Invalid type: {type}")
@@ -314,13 +314,24 @@ class UBWWMDetector(WMDetectorBase):
         mode: Literal["delta", "gamma"],
         *args,
         gamma: float = 1.0,
+        temperature: float = 1.0,
         ctx_n: int = 5,
         **kwargs,
     ) -> None:
+        """
+        Args:
+            key: Must satisfy the Buffer API, like bytes objects.
+        """
+        key = bytes(str(key), encoding="utf-8")
         super().__init__(model, tokenizer, key, *args, **kwargs)
         self.mode = mode
         self.gamma = gamma
+        self.temperature = temperature
         self.ctx_n = ctx_n
+        # process pool for scorer
+        from concurrent.futures import ProcessPoolExecutor
+
+        self.process_pool = ProcessPoolExecutor(max_workers=8)
 
         from unbiased_watermark import (
             Delta_Reweight,
@@ -344,17 +355,19 @@ class UBWWMDetector(WMDetectorBase):
         else:
             raise ValueError(f"Invalid mode: {self.mode}")
 
-    def detect_text(self, text: str, temperature: float, *args, **kwargs) -> DetectResult:
+    @torch.no_grad()
+    def detect_text(self, text: str, *args, **kwargs) -> DetectResult:
         """
         Detect watermark given input_ids.
 
         Args:
             input_ids (torch.LongTensor): input_ids to be detected.
         """
-        from unbiased_watermark import RobustLLR_Score, get_score
+        from unbiased_watermark import LLR_Score, RobustLLR_Score, get_score
 
         # NOTE: Hyperparameters are fixed for now.
-        scorer = RobustLLR_Score(0.1, 0.1)
+        scorer = RobustLLR_Score(0.1, 0.1, process_pool=self.process_pool)
+        # scorer = LLR_Score()
 
         raw_score, _prompt_len = get_score(
             text,
@@ -362,11 +375,13 @@ class UBWWMDetector(WMDetectorBase):
             score=scorer,
             model=self.model,
             tokenizer=self.tokenizer,
-            temperature=temperature,
+            temperature=self.temperature,
             prompt="",
         )
 
-        return DetectResult(llr_score=raw_score)
+        score = torch.clamp_(raw_score, -100, 100)
+
+        return DetectResult(llr_score=float(score.mean().abs().item()))
 
     def detect_tokens(self, input_ids: torch.LongTensor, *args, **kwargs) -> DetectResult:
         """
@@ -377,12 +392,13 @@ class UBWWMDetector(WMDetectorBase):
         """
         input_ids = self.prepare_unbatched_input(input_ids)
         text = self.tokenizer.decode(input_ids, skip_special_tokens=True)
-        return self.detect_text(text)
+        return self.detect_text(text, *args, **kwargs)
 
     def _state_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
             "private_key": self.key,
             "gamma": self.gamma,
+            "temperature": self.temperature,
             "ctx_n": self.ctx_n,
         }

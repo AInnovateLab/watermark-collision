@@ -305,6 +305,11 @@ class UBWWMGenerator(WMGeneratorBase):
         ctx_n: int = 5,
         **kwargs,
     ) -> None:
+        """
+        Args:
+            key: Must satisfy the Buffer API, like bytes objects.
+        """
+        key = bytes(str(key), encoding="utf-8")
         super().__init__(model, tokenizer, key, *args, **kwargs)
         self.mode = mode
         self.gamma = gamma

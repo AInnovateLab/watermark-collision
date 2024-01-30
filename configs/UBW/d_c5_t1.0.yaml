@@ -1,0 +1,13 @@
+generator:
+  type: "UBW"
+  mode: "delta"
+  ctx_n: 5
+  generate_kwargs:
+    do_sample: True
+    num_beams: 1
+    top_k: 0
+detector:
+  type: "UBW"
+  mode: "delta"
+  temperature: 1.0
+  ctx_n: 5

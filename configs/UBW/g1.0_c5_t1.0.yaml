@@ -1,0 +1,14 @@
+generator:
+  type: "UBW"
+  mode: "gamma"
+  gamma: 1.0
+  ctx_n: 5
+  generate_kwargs:
+    do_sample: True
+    num_beams: 1
+    top_k: 0
+detector:
+  type: "UBW"
+  mode: "gamma"
+  temperature: 1.0
+  ctx_n: 5

@@ -165,6 +165,7 @@ wm_text*/
 *.json
 results/
 data/
+tmp_*
 
 # All test files
 test*

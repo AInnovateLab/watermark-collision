@@ -96,7 +96,7 @@ class Watermarking:
 
         if file_path.exists():
             logging.warning(f"Output file exists: {file_path}")
-            override_input = input("Output file exists. Do you want to overwrite? (y/n):")
+            override_input = input("Output file exists. Do you want to overwrite? (y/[n]): ")
             if "y" not in override_input.lower():
                 logging.info("Aborting.")
                 return
@@ -113,9 +113,10 @@ class Watermarking:
         }
         generate_kwargs.update(self.generator_config.get("generate_kwargs", {}))
 
-        with jsonlines.open(file_path, mode="w") as writer, tqdm(
-            total=self.args.max_valid, desc="Valid samples", dynamic_ncols=True
-        ) as pbar:
+        with (
+            jsonlines.open(file_path, mode="w") as writer,
+            tqdm(total=self.args.max_valid, desc="Valid samples", dynamic_ncols=True) as pbar,
+        ):
             writer.write(vars(self.args))
             valid_num = 0
 

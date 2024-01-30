@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 import numpy as np
 import torch
@@ -27,9 +28,7 @@ def get_max_llr(
     def lowest_llr():
         if sum_q_logits < dist_q_logits:
             return -np.inf
-        modified_q_logits = sum_q_logits + np.log(
-            1 - np.exp(dist_q_logits - sum_q_logits)
-        )
+        modified_q_logits = sum_q_logits + np.log(1 - np.exp(dist_q_logits - sum_q_logits))
         modified_p_logits = np.logaddexp(sum_p_logits, dist_p_logits)
         return modified_q_logits - modified_p_logits
 
@@ -50,9 +49,7 @@ def get_min_llr(
     dist_p_logits: float,
     dist_q_logits: float,
 ) -> tuple[float, set]:
-    lowest_neg_llr, min_set = get_max_llr(
-        q_logits, p_logits, dist_q_logits, dist_p_logits
-    )
+    lowest_neg_llr, min_set = get_max_llr(q_logits, p_logits, dist_q_logits, dist_p_logits)
     return -lowest_neg_llr, min_set
 
 
@@ -63,26 +60,26 @@ def safe_ln(x):
 
 
 class RobustLLR_Score(AbstractScore):
-    def __init__(self, dist_p: float, dist_q: float):
+    def __init__(
+        self, dist_p: float, dist_q: float, process_pool: ProcessPoolExecutor | None = None
+    ):
         assert dist_p >= 0 and dist_q >= 0
         self.dist_p_logits = safe_ln(dist_p)
         self.dist_q_logits = safe_ln(dist_q)
+        self.process_pool = process_pool
 
-    def _score(self, p_logits: np.ndarray, q_logits: np.ndarray) -> tuple[float, float]:
-        max_llr, max_set = get_max_llr(
-            p_logits, q_logits, self.dist_p_logits, self.dist_q_logits
-        )
-        min_llr, min_set = get_min_llr(
-            p_logits, q_logits, self.dist_p_logits, self.dist_q_logits
-        )
+    @staticmethod
+    def _score(
+        p_logits: np.ndarray, q_logits: np.ndarray, dist_p_logits: float, dist_q_logits: float
+    ) -> tuple[float, float]:
+        max_llr, max_set = get_max_llr(p_logits, q_logits, dist_p_logits, dist_q_logits)
+        min_llr, min_set = get_min_llr(p_logits, q_logits, dist_p_logits, dist_q_logits)
         if max_set.intersection(min_set) or max_llr <= min_llr:
             return (0, 0)
         else:
             return (max_llr, min_llr)
 
-    def score(
-        self, p_logits: FloatTensor, q_logits: FloatTensor, n_workers=None
-    ) -> FloatTensor:
+    def score(self, p_logits: FloatTensor, q_logits: FloatTensor, n_workers=None) -> FloatTensor:
         q_logits = F.log_softmax(q_logits, dim=-1)
         p_logits = F.log_softmax(p_logits, dim=-1)
         llr = q_logits - p_logits
@@ -93,14 +90,33 @@ class RobustLLR_Score(AbstractScore):
             llr = torch.clamp(llr, min_llr, max_llr)
             return llr
         else:
-            from concurrent.futures import ProcessPoolExecutor
-
             ns, d = _q_logits.shape[:-1], _q_logits.shape[-1]
             _q_logits_flat = _q_logits.reshape(-1, d)
             _p_logits_flat = _p_logits.reshape(-1, d)
-            with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            if self.process_pool is None:
+                with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                    rs_flat = list(
+                        executor.map(
+                            partial(
+                                RobustLLR_Score._score,
+                                dist_p_logits=self.dist_p_logits,
+                                dist_q_logits=self.dist_q_logits,
+                            ),
+                            _p_logits_flat,
+                            _q_logits_flat,
+                        )
+                    )
+            else:
                 rs_flat = list(
-                    executor.map(self._score, _p_logits_flat, _q_logits_flat)
+                    self.process_pool.map(
+                        partial(
+                            RobustLLR_Score._score,
+                            dist_p_logits=self.dist_p_logits,
+                            dist_q_logits=self.dist_q_logits,
+                        ),
+                        _p_logits_flat,
+                        _q_logits_flat,
+                    )
                 )
             rs = np.reshape(rs_flat, (*ns, 2))
             max_llr = torch.tensor(rs[..., 0], device=llr.device, dtype=llr.dtype)
