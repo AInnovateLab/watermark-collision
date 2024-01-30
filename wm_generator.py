@@ -255,22 +255,21 @@ class SIRWMGenerator(WMGeneratorBase):
             input_ids (torch.LongTensor): input_ids to be watermarked.
             truncate_output (bool): whether to truncate the output to the newly created tokens.
         """
-        with torch.no_grad():
-            input_ids = self.prepare_batched_input(input_ids)
-            # generate watermark tokens
-            output_tokens = self.model.generate(
-                input_ids,
-                *args,
-                logits_processor=LogitsProcessorList([self.logits_processor]),
-                **kwargs,
-            )
+        input_ids = self.prepare_batched_input(input_ids)
+        # generate watermark tokens
+        output_tokens = self.model.generate(
+            input_ids,
+            *args,
+            logits_processor=LogitsProcessorList([self.logits_processor]),
+            **kwargs,
+        )
 
-            # if decoder only model, then we need to isolate the
-            # newly generated tokens as only those are watermarked, the input/prompt is not
-            if truncate_output:
-                output_tokens = output_tokens[:, input_ids.shape[-1] :]
+        # if decoder only model, then we need to isolate the
+        # newly generated tokens as only those are watermarked, the input/prompt is not
+        if truncate_output:
+            output_tokens = output_tokens[:, input_ids.shape[-1] :]
 
-            return output_tokens
+        return output_tokens
 
     def _state_dict(self) -> dict[str, Any]:
         return {
