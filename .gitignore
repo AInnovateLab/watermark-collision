@@ -170,3 +170,7 @@ tmp_*
 # All test files
 test*
 *.pth
+
+# Modified run script
+wm_usr.sh
+rephrase_usr.sh
