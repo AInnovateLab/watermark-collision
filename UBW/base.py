@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from abc import ABC, abstractmethod
+
 import torch
 from torch import FloatTensor, LongTensor
 from torch.nn import functional as F
@@ -24,9 +25,7 @@ class AbstractReweight(ABC):
     watermark_code_type: type[AbstractWatermarkCode]
 
     @abstractmethod
-    def reweight_logits(
-        self, code: AbstractWatermarkCode, p_logits: FloatTensor
-    ) -> FloatTensor:
+    def reweight_logits(self, code: AbstractWatermarkCode, p_logits: FloatTensor) -> FloatTensor:
         pass
 
 

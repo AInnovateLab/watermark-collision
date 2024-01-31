@@ -296,11 +296,11 @@ class SIRWMDetector(WMDetectorBase):
         }
 
 
-################
-#              #
-#    Unbias    #
-#              #
-################
+#############
+#           #
+#    UBW    #
+#           #
+#############
 class UBWWMDetector(WMDetectorBase):
     """
     Wrapper class for Unbiased watermark detector.
@@ -337,7 +337,7 @@ class UBWWMDetector(WMDetectorBase):
 
         self.process_pool = ProcessPoolExecutor(max_workers=8)
 
-        from unbiased_watermark import (
+        from UBW import (
             Delta_Reweight,
             Gamma_Reweight,
             PrevN_ContextCodeExtractor,
@@ -367,7 +367,7 @@ class UBWWMDetector(WMDetectorBase):
         Args:
             input_ids (torch.LongTensor): input_ids to be detected.
         """
-        from unbiased_watermark import LLR_Score, RobustLLR_Score, get_score
+        from UBW import LLR_Score, RobustLLR_Score, get_score
 
         # NOTE: Hyperparameters are fixed for now.
         scorer = RobustLLR_Score(0.1, 0.1, process_pool=self.process_pool)
@@ -530,7 +530,7 @@ class PRWWMDetector(WMDetectorBase):
         self.strength = strength
         self.z_threshold = z_threshold
 
-        from unigram_watermark.gptwm import GPTWatermarkDetector
+        from PRW.gptwm import GPTWatermarkDetector
 
         self.watermark_detector = GPTWatermarkDetector(
             fraction=self.fraction,

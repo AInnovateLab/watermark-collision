@@ -2,7 +2,7 @@ import torch
 from torch import FloatTensor
 from torch.nn import functional as F
 
-from . import AbstractWatermarkCode, AbstractReweight, AbstractScore
+from . import AbstractReweight, AbstractScore, AbstractWatermarkCode
 
 
 def get_gumbel_variables(rng, vocab_size):
@@ -38,14 +38,11 @@ class DeltaGumbel_Reweight(AbstractReweight):
     def __repr__(self):
         return f"DeltaGumbel_Reweight()"
 
-    def reweight_logits(
-        self, code: AbstractWatermarkCode, p_logits: FloatTensor
-    ) -> FloatTensor:
+    def reweight_logits(self, code: AbstractWatermarkCode, p_logits: FloatTensor) -> FloatTensor:
         assert isinstance(code, DeltaGumbel_WatermarkCode)
         index = torch.argmax(p_logits + code.g, dim=-1)
         modified_logits = torch.where(
-            torch.arange(p_logits.shape[-1], device=p_logits.device)
-            == index.unsqueeze(-1),
+            torch.arange(p_logits.shape[-1], device=p_logits.device) == index.unsqueeze(-1),
             torch.full_like(p_logits, 0),
             torch.full_like(p_logits, float("-inf")),
         )

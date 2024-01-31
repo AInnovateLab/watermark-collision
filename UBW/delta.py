@@ -2,7 +2,7 @@ import torch
 from torch import FloatTensor
 from torch.nn import functional as F
 
-from . import AbstractWatermarkCode, AbstractReweight, AbstractScore
+from . import AbstractReweight, AbstractScore, AbstractWatermarkCode
 
 
 class Delta_WatermarkCode(AbstractWatermarkCode):
@@ -19,10 +19,7 @@ class Delta_WatermarkCode(AbstractWatermarkCode):
         if isinstance(rng, list):
             batch_size = len(rng)
             u = torch.stack(
-                [
-                    torch.rand((), generator=rng[i], device=rng[i].device)
-                    for i in range(batch_size)
-                ]
+                [torch.rand((), generator=rng[i], device=rng[i].device) for i in range(batch_size)]
             )
         else:
             u = torch.rand((), generator=rng, device=rng.device)
@@ -35,9 +32,7 @@ class Delta_Reweight(AbstractReweight):
     def __repr__(self):
         return f"Delta_Reweight()"
 
-    def reweight_logits(
-        self, code: AbstractWatermarkCode, p_logits: FloatTensor
-    ) -> FloatTensor:
+    def reweight_logits(self, code: AbstractWatermarkCode, p_logits: FloatTensor) -> FloatTensor:
         cumsum = torch.cumsum(F.softmax(p_logits, dim=-1), dim=-1)
         index = torch.searchsorted(cumsum, code.u[..., None], right=True)
         index = torch.clamp(index, 0, p_logits.shape[-1] - 1)

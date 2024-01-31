@@ -76,7 +76,7 @@ class WatermarkLogitsProcessor(LogitsProcessor):
         new_logits: FloatTensor,
         scorer,
     ) -> FloatTensor:
-        from unbiased_watermark import RobustLLR_Score_Batch_v1, RobustLLR_Score_Batch_v2
+        from UBW import RobustLLR_Score_Batch_v1, RobustLLR_Score_Batch_v2
 
         if isinstance(scorer, RobustLLR_Score_Batch_v1):
             all_scores = scorer.score(old_logits, new_logits)

@@ -281,11 +281,11 @@ class SIRWMGenerator(WMGeneratorBase):
         }
 
 
-################
-#              #
-#    Unbias    #
-#              #
-################
+#############
+#           #
+#    UBW    #
+#           #
+#############
 class UBWWMGenerator(WMGeneratorBase):
     """
     Wrapper class for unbiased watermark generator.
@@ -316,7 +316,7 @@ class UBWWMGenerator(WMGeneratorBase):
         self.gamma = gamma
         self.ctx_n = ctx_n
 
-        from unbiased_watermark import (
+        from UBW import (
             Delta_Reweight,
             Gamma_Reweight,
             PrevN_ContextCodeExtractor,
@@ -505,7 +505,7 @@ class PRWWMGenerator(WMGeneratorBase):
         self.fraction = fraction
         self.strength = strength
 
-        from unigram_watermark.gptwm import GPTWatermarkLogitsWarper
+        from PRW.gptwm import GPTWatermarkLogitsWarper
 
         self.logits_processor = GPTWatermarkLogitsWarper(
             fraction=self.fraction,

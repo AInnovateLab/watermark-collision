@@ -110,9 +110,7 @@ def get_max_llr_v1(
     # shape = (..., query_size, vocab_size)
     modified_q_logits = torch.where(
         sum_q_logits <= dist_q_logs,
-        torch.tensor(
-            float("-inf"), device=sum_q_logits.device, dtype=sum_q_logits.dtype
-        ),
+        torch.tensor(float("-inf"), device=sum_q_logits.device, dtype=sum_q_logits.dtype),
         sum_q_logits + torch.log(-torch.expm1(dist_q_logs - sum_q_logits)),
     )
     del sum_q_logits
@@ -153,16 +151,10 @@ class RobustLLR_Score_Batch_v2(RobustLLR_Score_Batch_Base):
         p_logits = F.log_softmax(p_logits, dim=-1)
 
         max_llr = get_max_llr_v2(p_logits, q_logits, self.batch_query)
-        min_llr = -get_max_llr_v2(
-            q_logits, p_logits, [(q, p) for p, q in self.batch_query]
-        )
+        min_llr = -get_max_llr_v2(q_logits, p_logits, [(q, p) for p, q in self.batch_query])
         trivial_pos = max_llr < min_llr
-        max_llr = torch.where(
-            trivial_pos, torch.tensor(0.0, device=max_llr.device), max_llr
-        )
-        min_llr = torch.where(
-            trivial_pos, torch.tensor(0.0, device=min_llr.device), min_llr
-        )
+        max_llr = torch.where(trivial_pos, torch.tensor(0.0, device=max_llr.device), max_llr)
+        min_llr = torch.where(trivial_pos, torch.tensor(0.0, device=min_llr.device), min_llr)
 
         llr = safe_minus(q_logits, p_logits)
         return llr, max_llr, min_llr
@@ -205,16 +197,12 @@ def get_max_llr_v2(
         # shape = (..., vocab_size)
         modified_q_logits = torch.where(
             sum_q_logits <= dist_q_log,
-            torch.tensor(
-                float("-inf"), device=sum_q_logits.device, dtype=sum_q_logits.dtype
-            ),
+            torch.tensor(float("-inf"), device=sum_q_logits.device, dtype=sum_q_logits.dtype),
             sum_q_logits + torch.log(-torch.expm1(dist_q_log - sum_q_logits)),
         )
         modified_p_logits = torch.logaddexp(
             sum_p_logits,
-            torch.tensor(
-                dist_p_log, device=sum_p_logits.device, dtype=sum_p_logits.dtype
-            ),
+            torch.tensor(dist_p_log, device=sum_p_logits.device, dtype=sum_p_logits.dtype),
         )
 
         # shape = (..., vocab_size)

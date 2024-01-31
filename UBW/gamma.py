@@ -5,7 +5,7 @@ import torch
 from torch import FloatTensor, LongTensor
 from torch.nn import functional as F
 
-from . import AbstractWatermarkCode, AbstractReweight, AbstractScore
+from . import AbstractReweight, AbstractScore, AbstractWatermarkCode
 
 
 class Gamma_WatermarkCode(AbstractWatermarkCode):
@@ -44,9 +44,7 @@ class Gamma_Reweight(AbstractReweight):
         else:
             return f"Gamma_Reweight(gamma={self.gamma})"
 
-    def reweight_logits(
-        self, code: AbstractWatermarkCode, p_logits: FloatTensor
-    ) -> FloatTensor:
+    def reweight_logits(self, code: AbstractWatermarkCode, p_logits: FloatTensor) -> FloatTensor:
         """
         \textbf{$\gamma$-reweight:}
         Let the watermark code space $\mathcal{E}$ be the set of all bijective function between symbol set $\Sigma$ and a set of number $[\abs{\Sigma}]=\{1,\dots,\abs{\Sigma}\}$, where $\abs{\Sigma}$ is the size of symbol set $\Sigma$.

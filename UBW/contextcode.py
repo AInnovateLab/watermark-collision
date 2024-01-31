@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 
 from dataclasses import dataclass, field
+
 from torch import FloatTensor, LongTensor
+
 from .base import AbstractContextCodeExtractor
 
 

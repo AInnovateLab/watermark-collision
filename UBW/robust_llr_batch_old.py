@@ -1,10 +1,10 @@
+from dataclasses import dataclass, field
+
 import numpy as np
 import numpy.typing as npt
 import torch
 from torch import FloatTensor
 from torch.nn import functional as F
-
-from dataclasses import dataclass, field
 
 
 @dataclass
@@ -31,9 +31,7 @@ class GetMaxLLRQuery:
 
     def can_leverage(self, other: "GetMaxLLRQuery") -> bool:
         """if return true, then cache for query `other` can be used to reduce computation of query `self`"""
-        return (
-            self.dist_p_log >= other.dist_p_log and self.dist_q_log >= other.dist_q_log
-        )
+        return self.dist_p_log >= other.dist_p_log and self.dist_q_log >= other.dist_q_log
 
     def to_get_min(self):
         return GetMaxLLRQuery(dist_p_log=self.dist_q_log, dist_q_log=self.dist_p_log)
@@ -110,12 +108,8 @@ def get_max_llr_batch(
     for query in batch_query.query_list:
         candidates = batch_query.candidates[query]
         candidates = [c for c in candidates if query.can_leverage(c)]
-        candidate_caches = [
-            cache.query_cache[c] for c in candidates if c in cache.query_cache
-        ]
-        best_cache = max(
-            candidate_caches, key=lambda c: c.i, default=GetMaxLLRQueryCache()
-        )
+        candidate_caches = [cache.query_cache[c] for c in candidates if c in cache.query_cache]
+        best_cache = max(candidate_caches, key=lambda c: c.i, default=GetMaxLLRQueryCache())
         cache.query_cache[query] = get_max_llr_core(layout, query, best_cache)
     return cache
 
@@ -138,12 +132,13 @@ class RobustLLR_Score_Batch_v0:
         dist_q_logs.sort()
         batch_query = GetMaxLLRBatchQuery(
             query_list=[
-                GetMaxLLRQuery(d_p_l, d_q_l)
-                for d_p_l in dist_p_logs
-                for d_q_l in dist_q_logs
+                GetMaxLLRQuery(d_p_l, d_q_l) for d_p_l in dist_p_logs for d_q_l in dist_q_logs
             ],
             candidates={
-                GetMaxLLRQuery(dist_p_logs[i_d_p_l], dist_q_logs[i_d_q_l],): {
+                GetMaxLLRQuery(
+                    dist_p_logs[i_d_p_l],
+                    dist_q_logs[i_d_q_l],
+                ): {
                     GetMaxLLRQuery(dist_p_logs[i_d_p_l - a], dist_q_logs[i_d_q_l - b])
                     for a, b in [(0, 1), (1, 0)]
                     if i_d_p_l - a >= 0 and i_d_q_l - b >= 0
@@ -158,9 +153,7 @@ class RobustLLR_Score_Batch_v0:
         """output shape is (len(self.batch_query.query_list),len(p_logits))"""
         layout = GetMaxLLRLayout(p_logits, q_logits)
         max_llr_cache = get_max_llr_batch(layout, self.batch_query)
-        min_llr_cache = get_max_llr_batch(
-            layout.to_get_min(), self.batch_query.to_get_min()
-        )
+        min_llr_cache = get_max_llr_batch(layout.to_get_min(), self.batch_query.to_get_min())
         rs = []
         for query, max_llr, min_llr in [
             (
@@ -176,9 +169,7 @@ class RobustLLR_Score_Batch_v0:
                 rs.append((max_llr, min_llr))
         return np.array(rs)
 
-    def score(
-        self, p_logits: FloatTensor, q_logits: FloatTensor, n_workers=None
-    ) -> FloatTensor:
+    def score(self, p_logits: FloatTensor, q_logits: FloatTensor, n_workers=None) -> FloatTensor:
         """dim -2 in result is for different queries, dim -1 is for different tokens"""
         q_logits = F.log_softmax(q_logits, dim=-1)
         p_logits = F.log_softmax(p_logits, dim=-1)
@@ -186,12 +177,8 @@ class RobustLLR_Score_Batch_v0:
         _q_logits = q_logits.detach().cpu().numpy()
         _p_logits = p_logits.detach().cpu().numpy()
         if len(_q_logits.shape) == 1:
-            rs = torch.tensor(
-                self._score(_p_logits, _q_logits), device=llr.device, dtype=llr.dtype
-            )
-            llr = torch.clamp(
-                llr.unsqueeze(-2), rs[:, 1].unsqueeze(-1), rs[:, 0].unsqueeze(-1)
-            )
+            rs = torch.tensor(self._score(_p_logits, _q_logits), device=llr.device, dtype=llr.dtype)
+            llr = torch.clamp(llr.unsqueeze(-2), rs[:, 1].unsqueeze(-1), rs[:, 0].unsqueeze(-1))
             return llr
         else:
             from concurrent.futures import ProcessPoolExecutor
@@ -200,12 +187,8 @@ class RobustLLR_Score_Batch_v0:
             _q_logits_flat = _q_logits.reshape(-1, d)
             _p_logits_flat = _p_logits.reshape(-1, d)
             with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                rs_flat = list(
-                    executor.map(self._score, _p_logits_flat, _q_logits_flat)
-                )
+                rs_flat = list(executor.map(self._score, _p_logits_flat, _q_logits_flat))
             rs = np.reshape(rs_flat, (*ns, len(self.batch_query.query_list), 2))
             rs = torch.tensor(rs, device=llr.device, dtype=llr.dtype)
-            llr = torch.clamp(
-                llr.unsqueeze(-2), rs[..., 1].unsqueeze(-1), rs[..., 0].unsqueeze(-1)
-            )
+            llr = torch.clamp(llr.unsqueeze(-2), rs[..., 1].unsqueeze(-1), rs[..., 0].unsqueeze(-1))
             return llr
