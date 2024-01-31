@@ -3,11 +3,11 @@ https://github.com/yamatt/homoglyphs/tree/main/homoglyphs_fork
 for modern python3
 """
 
-from collections import defaultdict
 import json
-from itertools import product
 import os
 import unicodedata
+from collections import defaultdict
+from itertools import product
 
 # Actions if char not in alphabet
 STRATEGY_LOAD = 1  # load category for this char

@@ -15,19 +15,17 @@
 # limitations under the License.
 
 from __future__ import annotations
+
 import collections
 from math import sqrt
 
 import scipy.stats
-
 import torch
-from torch import Tensor
-from tokenizers import Tokenizer
-from transformers import LogitsProcessor
-
 from nltk.util import ngrams
-
 from normalizers import normalization_strategy_lookup
+from tokenizers import Tokenizer
+from torch import Tensor
+from transformers import LogitsProcessor
 
 
 class WatermarkBase:
@@ -58,7 +56,9 @@ class WatermarkBase:
             seeding_scheme = self.seeding_scheme
 
         if seeding_scheme == "simple_1":
-            assert input_ids.shape[-1] >= 1, f"seeding_scheme={seeding_scheme} requires at least a 1 token prefix sequence to seed rng"
+            assert (
+                input_ids.shape[-1] >= 1
+            ), f"seeding_scheme={seeding_scheme} requires at least a 1 token prefix sequence to seed rng"
             prev_token = input_ids[-1].item()
             self.rng.manual_seed(self.hash_key * prev_token)
         else:
@@ -71,11 +71,15 @@ class WatermarkBase:
         self._seed_rng(input_ids)
 
         greenlist_size = int(self.vocab_size * self.gamma)
-        vocab_permutation = torch.randperm(self.vocab_size, device=input_ids.device, generator=self.rng)
+        vocab_permutation = torch.randperm(
+            self.vocab_size, device=input_ids.device, generator=self.rng
+        )
         if self.select_green_tokens:  # directly
             greenlist_ids = vocab_permutation[:greenlist_size]  # new
         else:  # select green via red
-            greenlist_ids = vocab_permutation[(self.vocab_size - greenlist_size) :]  # legacy behavior
+            greenlist_ids = vocab_permutation[
+                (self.vocab_size - greenlist_size) :
+            ]  # legacy behavior
         return greenlist_ids
 
 
@@ -83,7 +87,9 @@ class WatermarkLogitsProcessor(WatermarkBase, LogitsProcessor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def _calc_greenlist_mask(self, scores: torch.FloatTensor, greenlist_token_ids) -> torch.BoolTensor:
+    def _calc_greenlist_mask(
+        self, scores: torch.FloatTensor, greenlist_token_ids
+    ) -> torch.BoolTensor:
         # TODO lets see if we can lose this loop
         green_tokens_mask = torch.zeros_like(scores)
         for b_idx in range(len(greenlist_token_ids)):
@@ -91,7 +97,9 @@ class WatermarkLogitsProcessor(WatermarkBase, LogitsProcessor):
         final_mask = green_tokens_mask.bool()
         return final_mask
 
-    def _bias_greenlist_logits(self, scores: torch.Tensor, greenlist_mask: torch.Tensor, greenlist_bias: float) -> torch.Tensor:
+    def _bias_greenlist_logits(
+        self, scores: torch.Tensor, greenlist_mask: torch.Tensor, greenlist_bias: float
+    ) -> torch.Tensor:
         scores[greenlist_mask] = scores[greenlist_mask] + greenlist_bias
         return scores
 
@@ -110,9 +118,13 @@ class WatermarkLogitsProcessor(WatermarkBase, LogitsProcessor):
             greenlist_ids = self._get_greenlist_ids(input_ids[b_idx])
             batched_greenlist_ids[b_idx] = greenlist_ids
 
-        green_tokens_mask = self._calc_greenlist_mask(scores=scores, greenlist_token_ids=batched_greenlist_ids)
+        green_tokens_mask = self._calc_greenlist_mask(
+            scores=scores, greenlist_token_ids=batched_greenlist_ids
+        )
 
-        scores = self._bias_greenlist_logits(scores=scores, greenlist_mask=green_tokens_mask, greenlist_bias=self.delta)
+        scores = self._bias_greenlist_logits(
+            scores=scores, greenlist_mask=green_tokens_mask, greenlist_bias=self.delta
+        )
         return scores
 
 
@@ -148,7 +160,9 @@ class WatermarkDetector(WatermarkBase):
 
         self.ignore_repeated_bigrams = ignore_repeated_bigrams
         if self.ignore_repeated_bigrams:
-            assert self.seeding_scheme == "simple_1", "No repeated bigram credit variant assumes the single token seeding scheme."
+            assert (
+                self.seeding_scheme == "simple_1"
+            ), "No repeated bigram credit variant assumes the single token seeding scheme."
 
     def _compute_z_score(self, observed_count, T):
         # count refers to number of green tokens, T is total number of tokens
@@ -178,13 +192,17 @@ class WatermarkDetector(WatermarkBase):
             # We iterate over all unqiue token bigrams in the input, computing the greenlist
             # induced by the first token in each, and then checking whether the second
             # token falls in that greenlist.
-            assert return_green_token_mask is False, "Can't return the green/red mask when ignoring repeats."
+            assert (
+                return_green_token_mask is False
+            ), "Can't return the green/red mask when ignoring repeats."
             bigram_table = {}
             token_bigram_generator = ngrams(input_ids.cpu().tolist(), 2)
             freq = collections.Counter(token_bigram_generator)
             num_tokens_scored = len(freq.keys())
             for idx, bigram in enumerate(freq.keys()):
-                prefix = torch.tensor([bigram[0]], device=self.device)  # expects a 1-d prefix tensor on the randperm device
+                prefix = torch.tensor(
+                    [bigram[0]], device=self.device
+                )  # expects a 1-d prefix tensor on the randperm device
                 greenlist_ids = self._get_greenlist_ids(prefix)
                 bigram_table[bigram] = True if bigram[1] in greenlist_ids else False
             green_token_count = sum(bigram_table.values())
@@ -221,7 +239,9 @@ class WatermarkDetector(WatermarkBase):
         if return_green_fraction:
             score_dict.update(dict(green_fraction=(green_token_count / num_tokens_scored)))
         if return_z_score:
-            score_dict.update(dict(z_score=self._compute_z_score(green_token_count, num_tokens_scored)))
+            score_dict.update(
+                dict(z_score=self._compute_z_score(green_token_count, num_tokens_scored))
+            )
         if return_p_value:
             z_score = score_dict.get("z_score")
             if z_score is None:
@@ -242,9 +262,13 @@ class WatermarkDetector(WatermarkBase):
         **kwargs,
     ) -> dict:
 
-        assert (text is not None) ^ (tokenized_text is not None), "Must pass either the raw or tokenized string"
+        assert (text is not None) ^ (
+            tokenized_text is not None
+        ), "Must pass either the raw or tokenized string"
         if return_prediction:
-            kwargs["return_p_value"] = True  # to return the "confidence":=1-p of positive detections
+            kwargs["return_p_value"] = (
+                True  # to return the "confidence":=1-p of positive detections
+            )
 
         # run optional normalizers on text
         for normalizer in self.normalizers:
@@ -258,7 +282,9 @@ class WatermarkDetector(WatermarkBase):
                 "requires an instance of the tokenizer ",
                 "that was used at generation time.",
             )
-            tokenized_text = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)["input_ids"][0].to(self.device)
+            tokenized_text = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)[
+                "input_ids"
+            ][0].to(self.device)
             if tokenized_text[0] == self.tokenizer.bos_token_id:
                 tokenized_text = tokenized_text[1:]
         else:
@@ -274,7 +300,9 @@ class WatermarkDetector(WatermarkBase):
         # if passed return_prediction then perform the hypothesis test and return the outcome
         if return_prediction:
             z_threshold = z_threshold if z_threshold else self.z_threshold
-            assert z_threshold is not None, "Need a threshold in order to decide outcome of detection test"
+            assert (
+                z_threshold is not None
+            ), "Need a threshold in order to decide outcome of detection test"
             output_dict["prediction"] = score_dict["z_score"] > z_threshold
             if output_dict["prediction"]:
                 output_dict["confidence"] = 1 - score_dict["p_value"]

@@ -4,6 +4,7 @@ A wrapper class for watermark detector.
 
 import dataclasses
 import os
+import sys
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ def get_detector_class_from_type(type: str) -> Type["WMDetectorBase"]:
             return UBWWMDetector
         case "PRW":
             return PRWWMDetector
+        case "RDW":
+            return RDWWMDetector
         case _:
             raise ValueError(f"Invalid type: {type}")
 
@@ -155,7 +158,7 @@ class KGWWMDetector(WMDetectorBase):
         self.seeding_scheme = seeding_scheme
         self.z_threshold = z_threshold
 
-        from watermarking.extended_watermark_processor import WatermarkDetector
+        from KGW.extended_watermark_processor import WatermarkDetector
 
         self.watermark_detector = WatermarkDetector(
             vocab=list(self.tokenizer.get_vocab().values()),
@@ -237,7 +240,7 @@ class SIRWMDetector(WMDetectorBase):
         self.embedding_model = embedding_model
         self.z_threshold = z_threshold
 
-        from robust_watermark.watermark import WatermarkContext, WatermarkWindow
+        from SIR.watermark import WatermarkContext, WatermarkWindow
 
         if mode == "window":
             self.watermark_detector = WatermarkWindow(
@@ -261,6 +264,7 @@ class SIRWMDetector(WMDetectorBase):
         else:
             raise ValueError(f"Invalid mode: {self.mode}")
 
+    @torch.no_grad()
     def detect_text(self, input_text):
         """
         Detect watermark given input_ids.
@@ -268,10 +272,9 @@ class SIRWMDetector(WMDetectorBase):
         Args:
             input_ids (torch.LongTensor): input_ids to be detected.
         """
-        with torch.no_grad():
-            raw_score = self.watermark_detector.detect(input_text)
-            prediction_result = raw_score > self.z_threshold
-            return DetectResult(z_score=raw_score, prediction=prediction_result)
+        raw_score = self.watermark_detector.detect(input_text)
+        prediction_result = raw_score > self.z_threshold
+        return DetectResult(z_score=raw_score, prediction=prediction_result)
 
     def detect_tokens(self, input_ids: torch.LongTensor, *args, **kwargs) -> DetectResult:
         """
@@ -280,10 +283,9 @@ class SIRWMDetector(WMDetectorBase):
         Args:
             input_ids (torch.LongTensor): input_ids to be detected.
         """
-        with torch.no_grad():
-            ids = self.prepare_unbatched_input(input_ids)
-            text = self.tokenizer.decode(ids, skip_special_tokens=True)
-            return self.detect_text(text)
+        ids = self.prepare_unbatched_input(input_ids)
+        text = self.tokenizer.decode(ids, skip_special_tokens=True)
+        return self.detect_text(text)
 
     def _state_dict(self) -> dict[str, Any]:
         return {
@@ -402,6 +404,101 @@ class UBWWMDetector(WMDetectorBase):
             "gamma": self.gamma,
             "temperature": self.temperature,
             "ctx_n": self.ctx_n,
+        }
+
+
+#############
+#           #
+#    RDW    #
+#           #
+#############
+class RDWWMDetector(WMDetectorBase):
+    """
+    Wrapper class for unbiased watermark generator.
+    Ref:
+        Unbiased Watermark for Large Language Models. https://arxiv.org/abs/2310.10669
+    """
+
+    TYPE = "RDW"
+
+    def __init__(
+        self,
+        model: GenerationMixin | Any,
+        tokenizer: PreTrainedTokenizer | Any,
+        key: Any,
+        wm_sequence_length: int,
+        *args,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, tokenizer, key, *args, **kwargs)
+        self.wm_sequence_length = wm_sequence_length
+
+    def detect(self, tokens, n, k, xi, gamma=0.0):
+        import pyximport
+
+        pyximport.install(
+            reload_support=True,
+            language_level=sys.version_info[0],
+            setup_args={"include_dirs": np.get_include()},
+        )
+        from RDW.levenshtein import levenshtein
+
+        m = len(tokens)
+        n = len(xi)
+
+        A = np.empty((m - (k - 1), n))
+        for i in range(m - (k - 1)):
+            for j in range(n):
+                A[i][j] = levenshtein(tokens[i : i + k], xi[(j + np.arange(k)) % n], gamma)
+
+        return np.min(A)
+
+    @torch.no_grad()
+    def detect_text(self, input_text):
+        """
+        Detect watermark given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be detected.
+        """
+        raise NotImplementedError
+
+    @torch.no_grad()
+    def detect_tokens(self, input_ids: torch.LongTensor, *args, **kwargs) -> DetectResult:
+        """
+        Detect watermark given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be detected.
+        """
+        input_ids = self.prepare_unbatched_input(input_ids).numpy()
+        token_length = len(input_ids)
+        vocab_size = len(self.tokenizer)
+        n_runs = 100
+        from RDW.mersenne import mersenne_rng
+
+        rng = mersenne_rng(self.key)
+        xi = np.array(
+            [rng.rand() for _ in range(self.wm_sequence_length * vocab_size)], dtype=np.float32
+        ).reshape(self.wm_sequence_length, vocab_size)
+        test_result = self.detect(input_ids, self.wm_sequence_length, token_length, xi)
+
+        p_val = 0
+        for _ in range(n_runs):
+            xi_alternative = np.random.rand(self.wm_sequence_length, vocab_size).astype(np.float32)
+            null_result = self.detect(
+                input_ids, self.wm_sequence_length, token_length, xi_alternative
+            )
+
+            # assuming lower test values indicate presence of watermark
+            p_val += null_result <= test_result
+
+        p_value = (p_val + 1.0) / (n_runs + 1.0)
+        return DetectResult(z_score=p_value)
+
+    def _state_dict(self) -> dict[str, Any]:
+        return {
+            "wm_sequence_length": self.wm_sequence_length,
         }
 
 

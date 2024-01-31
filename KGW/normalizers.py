@@ -6,6 +6,7 @@ it represents our best effort at the time of writing.
 These normalizers can be used as stand-alone normalizers. They could be made to conform to HF tokenizers standard, but that would
 require messing with the limited rust interface of tokenizers.NormalizedString
 """
+
 import os
 import re
 import sys

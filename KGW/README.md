@@ -4,7 +4,7 @@
 
 Official implementation of the watermarking and detection algorithms presented in the paper:
 
-"A Watermark for Large language Models" by _John Kirchenbauer*, Jonas Geiping*, Yuxin Wen, Jonathan Katz, Ian Miers, Tom Goldstein_  
+"A Watermark for Large language Models" by _John Kirchenbauer*, Jonas Geiping*, Yuxin Wen, Jonathan Katz, Ian Miers, Tom Goldstein_
 
 ### Updates:
 

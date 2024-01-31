@@ -1,0 +1,7 @@
+generator:
+  type: "RDW"
+  wm_sequence_length: 256
+detector:
+  type: "RDW"
+  wm_sequence_length: 256
+  z_threshold: 0.0

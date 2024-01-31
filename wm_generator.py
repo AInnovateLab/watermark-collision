@@ -22,6 +22,8 @@ def get_generator_class_from_type(type: str) -> Type["WMGeneratorBase"]:
             return UBWWMGenerator
         case "PRW":
             return PRWWMGenerator
+        case "RDW":
+            return RDWWMGenerator
         case _:
             raise ValueError(f"Invalid type: {type}")
 
@@ -136,7 +138,7 @@ class KGWWMGenerator(WMGeneratorBase):
         self.delta = delta
         self.seeding_scheme = seeding_scheme
 
-        from watermarking.extended_watermark_processor import WatermarkLogitsProcessor
+        from KGW.extended_watermark_processor import WatermarkLogitsProcessor
 
         self.logits_processor = WatermarkLogitsProcessor(
             vocab=list(self.tokenizer.get_vocab().values()),
@@ -220,11 +222,7 @@ class SIRWMGenerator(WMGeneratorBase):
         )
         self.embedding_model = embedding_model
 
-        from robust_watermark.watermark import (
-            WatermarkContext,
-            WatermarkLogitsProcessor,
-            WatermarkWindow,
-        )
+        from SIR.watermark import WatermarkContext, WatermarkLogitsProcessor, WatermarkWindow
 
         if mode == "window":
             self.watermark_model = WatermarkWindow(
@@ -375,6 +373,107 @@ class UBWWMGenerator(WMGeneratorBase):
             "mode": self.mode,
             "gamma": self.gamma,
             "ctx_n": self.ctx_n,
+        }
+
+
+#############
+#           #
+#    RDW    #
+#           #
+#############
+class RDWWMGenerator(WMGeneratorBase):
+    """
+    Wrapper class for unbiased watermark generator.
+    Ref:
+        Unbiased Watermark for Large Language Models. https://arxiv.org/abs/2310.10669
+    """
+
+    TYPE = "RDW"
+
+    def __init__(
+        self,
+        model: GenerationMixin | Any,
+        tokenizer: PreTrainedTokenizer | Any,
+        key: Any,
+        wm_sequence_length: int,
+        *args,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, tokenizer, key, *args, **kwargs)
+        self.wm_sequence_length = wm_sequence_length
+
+    def generate_shift(
+        self,
+        model: GenerationMixin | Any,
+        input_ids: torch.LongTensor,
+        vocab_size: int,
+        wm_sequence_length: int,
+        max_new_tokens: int,
+        key: int,
+        **kwargs,
+    ):
+        from RDW.mersenne import mersenne_rng
+
+        rng = mersenne_rng(key)
+        xi = torch.tensor([rng.rand() for _ in range(wm_sequence_length * vocab_size)]).view(
+            wm_sequence_length, vocab_size
+        )
+        shift = torch.randint(wm_sequence_length, (1,))
+
+        inputs = input_ids.to(model.device)
+        attn = torch.ones_like(inputs)
+        past = None
+        for i in range(max_new_tokens):
+            with torch.no_grad():
+                if past:
+                    output = model(inputs[:, -1:], past_key_values=past, attention_mask=attn)
+                else:
+                    output = model(inputs)
+
+            probs = torch.nn.functional.softmax(output.logits[:, -1, :vocab_size], dim=-1).cpu()
+            token = (
+                torch.argmax(xi[(shift + i) % wm_sequence_length, :] ** (1 / probs), axis=1)
+                .unsqueeze(-1)
+                .to(model.device)
+            )
+            inputs = torch.cat([inputs, token], dim=-1)
+
+            past = output.past_key_values
+            attn = torch.cat([attn, attn.new_ones((attn.shape[0], 1))], dim=-1)
+
+        return inputs.detach().cpu()
+
+    def generate(
+        self, input_ids: torch.LongTensor, *args, truncate_output: bool = True, **kwargs
+    ) -> torch.LongTensor:
+        """
+        Generate watermark tokens given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be watermarked.
+            truncate_output (bool): whether to truncate the output to the newly created tokens.
+        """
+        input_ids = self.prepare_batched_input(input_ids)
+        # generate watermark tokens
+        output_tokens = self.generate_shift(
+            self.model,
+            input_ids,
+            vocab_size=len(self.tokenizer),
+            wm_sequence_length=self.wm_sequence_length,
+            key=self.key,
+            **kwargs,
+        )
+
+        # if decoder only model, then we need to isolate the
+        # newly generated tokens as only those are watermarked, the input/prompt is not
+        if truncate_output:
+            output_tokens = output_tokens[:, input_ids.shape[-1] :]
+
+        return output_tokens
+
+    def _state_dict(self) -> dict[str, Any]:
+        return {
+            "wm_sequence_length": self.wm_sequence_length,
         }
 
 

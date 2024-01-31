@@ -589,9 +589,9 @@ class WatermarkDetector(WatermarkBase):
             tokenized_text is not None
         ), "Must pass either the raw or tokenized string"
         if return_prediction:
-            kwargs[
-                "return_p_value"
-            ] = True  # to return the "confidence":=1-p of positive detections
+            kwargs["return_p_value"] = (
+                True  # to return the "confidence":=1-p of positive detections
+            )
 
         # run optional normalizers on text
         for normalizer in self.normalizers:

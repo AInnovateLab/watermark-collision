@@ -20,9 +20,10 @@ extended_watermark_processor.py
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-from itertools import combinations
 from functools import cache
+from itertools import combinations
+
+import torch
 
 # Key properties of a hashing scheme
 props = {
@@ -57,7 +58,9 @@ def seeding_scheme_lookup(seeding_scheme: str, hash_key=15485863):
         context_width = 5
         self_salt = False
         # hash_key = hashkey
-    elif seeding_scheme.startswith("ff"):  # freeform seeding scheme API - only use for experimenting
+    elif seeding_scheme.startswith(
+        "ff"
+    ):  # freeform seeding scheme API - only use for experimenting
         # expects strings of the form ff-additive_prf-4-True-hash or ff-additive_prf-5-True (hash key is optional)
         split_scheme = seeding_scheme.split("-")
         prf_type = str(split_scheme[1])
@@ -127,7 +130,11 @@ def noncomm_prf(input_ids: torch.LongTensor, salt_key: int, k: int = 2) -> int:
 
 
 def position_prf(input_ids: torch.LongTensor, salt_key: int, k: int = 2) -> int:
-    return (salt_key * input_ids * torch.arange(1, len(input_ids) + 1, device=input_ids.device)).sum().item()
+    return (
+        (salt_key * input_ids * torch.arange(1, len(input_ids) + 1, device=input_ids.device))
+        .sum()
+        .item()
+    )
 
 
 prf_lookup = {
@@ -148,12 +155,16 @@ prf_lookup = {
 rng = torch.Generator(device=torch.device("cpu"))
 rng.manual_seed(2971215073)  # fib47 is prime
 table_size = 1_000_003
-fixed_table = torch.randperm(1_000_003, device=torch.device("cpu"), generator=rng)  # actually faster than I thought
+fixed_table = torch.randperm(
+    1_000_003, device=torch.device("cpu"), generator=rng
+)  # actually faster than I thought
 
 
 def hashint(integer_tensor: torch.LongTensor) -> torch.LongTensor:
     """Sane version, in the end we only need a small permutation table."""
-    return fixed_table[integer_tensor.cpu() % table_size] + 1  # minor cheat here, this function always return CPU values
+    return (
+        fixed_table[integer_tensor.cpu() % table_size] + 1
+    )  # minor cheat here, this function always return CPU values
 
 
 def _hashint_avalanche_tensor(integer_tensor: torch.LongTensor):
