@@ -9,6 +9,7 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal, Type
+from functools import partial
 
 import numpy as np
 import torch
@@ -427,13 +428,13 @@ class RDWWMDetector(WMDetectorBase):
         tokenizer: PreTrainedTokenizer | Any,
         key: Any,
         wm_sequence_length: int,
+        n_workers: int = -1,
         *args,
         **kwargs,
     ) -> None:
         super().__init__(model, tokenizer, key, *args, **kwargs)
         self.wm_sequence_length = wm_sequence_length
 
-    def detect(self, tokens, n, k, xi, gamma=0.0):
         import pyximport
 
         pyximport.install(
@@ -441,16 +442,26 @@ class RDWWMDetector(WMDetectorBase):
             language_level=sys.version_info[0],
             setup_args={"include_dirs": np.get_include()},
         )
+
+        if n_workers >= 2:
+            from concurrent.futures import ProcessPoolExecutor
+            os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
+            self.process_pool = ProcessPoolExecutor(max_workers=n_workers)
+        else:
+            self.process_pool = None
+
+    @staticmethod
+    def detect(tokens, n, k, xi, gamma=0.0):
+        
         from RDW.levenshtein import levenshtein
 
         m = len(tokens)
         n = len(xi)
-
         A = np.empty((m - (k - 1), n))
         for i in range(m - (k - 1)):
             for j in range(n):
                 A[i][j] = levenshtein(tokens[i : i + k], xi[(j + np.arange(k)) % n], gamma)
-
         return np.min(A)
 
     @torch.no_grad()
@@ -483,15 +494,18 @@ class RDWWMDetector(WMDetectorBase):
         ).reshape(self.wm_sequence_length, vocab_size)
         test_result = self.detect(input_ids, self.wm_sequence_length, token_length, xi)
 
-        p_val = 0
+        p_val_l = []
         for _ in range(n_runs):
             xi_alternative = np.random.rand(self.wm_sequence_length, vocab_size).astype(np.float32)
-            null_result = self.detect(
-                input_ids, self.wm_sequence_length, token_length, xi_alternative
-            )
-
-            # assuming lower test values indicate presence of watermark
-            p_val += null_result <= test_result
+            if self.process_pool is not None:
+                p_val_l.append(self.process_pool.submit(RDWWMDetector.detect, input_ids, self.wm_sequence_length, token_length, xi_alternative))
+            else:
+                p_val_l.append(self.detect(input_ids, self.wm_sequence_length, token_length, xi_alternative))
+        if self.process_pool is not None:
+            p_val_l = [it.result() for it in p_val_l]
+        
+        # assuming lower test values indicate presence of watermark
+        p_val = sum([r <= test_result for r in p_val_l])
 
         p_value = (p_val + 1.0) / (n_runs + 1.0)
         return DetectResult(z_score=p_value)

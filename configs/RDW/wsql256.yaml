@@ -5,3 +5,4 @@ detector:
   type: "RDW"
   wm_sequence_length: 256
   z_threshold: 0.0
+  n_workers: 32
