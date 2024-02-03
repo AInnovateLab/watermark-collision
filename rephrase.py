@@ -119,10 +119,13 @@ You're welcome! Here's a paraphrased version of the original message:
 
         if file_path.exists():
             logging.warning(f"Output file exists: {file_path}")
-            override_input = input("Output file exists. Do you want to overwrite? (y/[n]): ")
-            if "y" not in override_input.lower():
-                logging.info("Aborting.")
-                return
+            if not self.args.no_confirm:
+                override_input = input("Output file exists. Do you want to overwrite? (y/[n]): ")
+                if "y" not in override_input.lower():
+                    logging.info("Aborting.")
+                    return
+            else:
+                logging.info("Overwrite output file due to --no-confirm set")
         logging.info(f"Saving results to {file_path}")
 
         # generate kwargs
@@ -184,6 +187,12 @@ def parse():
     # I/O
     parser.add_argument("--input-file", type=str, required=True, help="Path to input file.")
     parser.add_argument("--use-wm", action="store_true", default=False)
+    parser.add_argument(
+        "--no-confirm",
+        action="store_true",
+        default=False,
+        help="Overwrite output file without confirmation if set true",
+    )
     output_ex_group = parser.add_mutually_exclusive_group(required=True)
     output_ex_group.add_argument(
         "--output-dir",

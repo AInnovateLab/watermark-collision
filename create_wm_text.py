@@ -147,7 +147,7 @@ def parse():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--model-name-or-path", type=str, default="TheBloke/Llama-2-7B-GPTQ")
     parser.add_argument("--dataset-name", type=str, default="stas/c4-en-10k")
-    parser.add_argument("--max-valid", type=int, default=2000, help="Max number of valid samples")
+    parser.add_argument("--max-valid", type=int, default=1000, help="Max number of valid samples")
     # Generator/Detector loading
     parser.add_argument("--generator-file", type=str, required=True, help="Yaml file for generator")
     parser.add_argument("--detector-file", type=str, required=True, help="Yaml file for detector")
