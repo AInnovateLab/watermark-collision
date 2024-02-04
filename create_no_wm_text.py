@@ -95,6 +95,8 @@ class NoWatermarking:
             for data in tqdm(self.tokenized_dataset):
                 input_ids = data["input_ids"].to(self.device)
                 output_tokens = self.model.generate(input_ids, **generate_kwargs)
+                # truncate
+                output_tokens = output_tokens[:, input_ids.size(-1) :]
 
                 # output_text = self.generator.tokens2text(output_tokens)
                 output_text = self.tokenizer.decode(output_tokens[0], skip_special_tokens=True)
