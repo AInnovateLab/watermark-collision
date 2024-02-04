@@ -130,13 +130,16 @@ You're welcome! Here's a paraphrased version of the original message:
 
         # generate kwargs
         generate_kwargs = {
-            "truncate_output": True,
             "temperature": self.args.temperature,
             "do_sample": True,
             "max_new_tokens": self.args.max_new_tokens,
             "min_new_tokens": self.args.min_new_tokens,
         }
         generate_kwargs.update(self.rephraser_config.get("generate_kwargs", {}))
+
+        if self.args.use_wm:
+            # Default generator do not accept this kwarg
+            generate_kwargs.update({"truncate_output": True})
 
         with jsonlines.open(file_path, mode="w") as writer:
             # writer.write(self.settings)
