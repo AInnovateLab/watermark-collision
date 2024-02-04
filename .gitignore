@@ -166,6 +166,7 @@ wm_text*/
 results/
 data/
 tmp_*
+tmp/
 
 # All test files
 test*
