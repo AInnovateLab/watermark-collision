@@ -13,7 +13,7 @@ def parse_args():
     parser.add_argument(
         "--fprs",
         type=float,
-        default=[0.01, 0.1],
+        default=[0.01, 0.05, 0.1],
         nargs="+",
         help="False positive rates to be computed.",
     )
@@ -65,10 +65,14 @@ def main():
     with jsonlines.open(wm_jsonl) as wm_reader, jsonlines.open(no_wm_jsonl) as no_wm_reader:
         wm_config, no_wm_config = wm_reader.read(), no_wm_reader.read()
         # config check
+        if wm_config["args"]["use_wm"] != True:
+            logging.warning("The `use_wm` of the `wm-jsonl` config is not True.")
+        if no_wm_config["args"]["use_wm"] != False:
+            logging.warning("The `use_wm` of the `no-wm-jsonl` config is not False.")
         if wm_config["args"]["new_key"] != no_wm_config["args"]["new_key"]:
-            warnings.warn("The `new_key` of the two configs are different.")
+            logging.warning("The `new_key` of the two configs are different.")
         if wm_config["settings"]["key"] != no_wm_config["settings"]["key"]:
-            warnings.warn("The `key` of the two configs are different.")
+            logging.warning("The `key` of the two configs are different.")
         wm_data, no_wm_data = list(wm_reader), list(no_wm_reader)
 
         fprs: list[float] = args.fprs
