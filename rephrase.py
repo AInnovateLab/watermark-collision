@@ -200,7 +200,7 @@ def parse():
     output_ex_group.add_argument(
         "--output-dir",
         type=str,
-        help="Output directory. If specified, enable automatic naming from the yaml file of gneerator and detector.",
+        help="Output directory. If specified, enable automatic naming from the yaml file of generator and detector.",
     )
     output_ex_group.add_argument(
         "--output-file",
