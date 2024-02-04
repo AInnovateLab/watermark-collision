@@ -153,6 +153,8 @@ You're welcome! Here's a paraphrased version of the original message:
                     output_tokens = self.rephraser.generate(input_ids, **generate_kwargs)
                 else:
                     output_tokens = self.model.generate(input_ids, **generate_kwargs)
+                    # truncate
+                    output_tokens = output_tokens[:, input_ids.size(-1) :]
 
                 result_ori = self.detector_old.detect_tokens(output_tokens)
                 result_new = self.detector_new.detect_tokens(output_tokens)
