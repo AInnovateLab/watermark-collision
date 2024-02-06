@@ -65,6 +65,8 @@ def evaluate_fpr_tpr(
     gen_no_wm = np_dropna(gen_no_wm)
     wm_olds = np.array([get_score(d["original_results"]) for d in wm_data], dtype=np.float64)
     wm_olds = np_dropna(wm_olds)
+    no_wm_olds = np.array([get_score(d["original_results"]) for d in no_wm_data], dtype=np.float64)
+    no_wm_olds = np_dropna(no_wm_olds)
     wm_news = np.array([get_score(d["generated_results"]) for d in wm_data], dtype=np.float64)
     wm_news = np_dropna(wm_news)
     no_wm_news = np.array([get_score(d["generated_results"]) for d in no_wm_data], dtype=np.float64)
@@ -73,6 +75,9 @@ def evaluate_fpr_tpr(
         # generated
         thres_gen = np.percentile(gen_no_wm, 100 * (1 - fpr))
         tpr_gen = np.sum(gen_wm > thres_gen) / len(gen_wm)
+        # generated & rephrased by no_wm
+        thres_gen_wo_wm = np.percentile(gen_no_wm, 100 * (1 - fpr))
+        tpr_gen_no_wm_rephrased = np.sum(no_wm_olds > thres_gen_wo_wm) / len(gen_wm)
         # old
         thres_old = thres_gen
         tpr_old = np.sum(wm_olds > thres_old) / len(wm_olds)
@@ -80,7 +85,14 @@ def evaluate_fpr_tpr(
         thres_new = np.percentile(no_wm_news, 100 * (1 - fpr))
         tpr_new = np.sum(wm_news > thres_new) / len(wm_news)
 
-        results.append({"generated": tpr_gen, "old": tpr_old, "new": tpr_new})
+        results.append(
+            {
+                "generated": tpr_gen,
+                "no_wm_rephrased": tpr_gen_no_wm_rephrased,
+                "old": tpr_old,
+                "new": tpr_new,
+            }
+        )
     return results
 
 
@@ -114,10 +126,16 @@ def main(args, verbose=False) -> dict[float, dict[str, float]]:
         fprs: list[float] = args.fprs
         results = evaluate_fpr_tpr(args.fprs, gen_wm_data, gen_no_wm_data, wm_data, no_wm_data)
         for fpr, result in zip(fprs, results):
-            gen_tpr, old_tpr, new_tpr = result["generated"], result["old"], result["new"]
+            gen_tpr, nwr_tpr, old_tpr, new_tpr = (
+                result["generated"],
+                result["no_wm_rephrased"],
+                result["old"],
+                result["new"],
+            )
             if verbose:
                 print(
                     f"FPR: {fpr*100: >6.2f}%,    Gen TPR: {gen_tpr*100: >6.2f}%,    "
+                    f"NW Rephrased TPR: {nwr_tpr*100: >6.2f}%,    "
                     f"Old TPR: {old_tpr*100: >6.2f}%,    New TPR: {new_tpr*100: >6.2f}%"
                 )
         return {fpr: result for fpr, result in zip(fprs, results)}
