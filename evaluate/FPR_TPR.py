@@ -56,12 +56,19 @@ def evaluate_fpr_tpr(
         else:
             raise ValueError("Unknown score type.")
 
+    def np_dropna(arr: np.ndarray) -> np.ndarray:
+        return arr[~np.isnan(arr) & ~np.isinf(arr)]
+
     gen_wm = np.array([get_score(d["results"]) for d in gen_wm_data], dtype=np.float64)
+    gen_wm = np_dropna(gen_wm)
     gen_no_wm = np.array([get_score(d["results"]) for d in gen_no_wm_data], dtype=np.float64)
+    gen_no_wm = np_dropna(gen_no_wm)
     wm_olds = np.array([get_score(d["original_results"]) for d in wm_data], dtype=np.float64)
+    wm_olds = np_dropna(wm_olds)
     wm_news = np.array([get_score(d["generated_results"]) for d in wm_data], dtype=np.float64)
-    _no_wm_olds = np.array([get_score(d["original_results"]) for d in no_wm_data], dtype=np.float64)
+    wm_news = np_dropna(wm_news)
     no_wm_news = np.array([get_score(d["generated_results"]) for d in no_wm_data], dtype=np.float64)
+    no_wm_news = np_dropna(no_wm_news)
     for fpr in fprs:
         # generated
         thres_gen = np.percentile(gen_no_wm, 100 * (1 - fpr))
@@ -77,9 +84,7 @@ def evaluate_fpr_tpr(
     return results
 
 
-def main():
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(asctime)s %(message)s")
-    args = parse_args()
+def main(args, verbose=False) -> dict[float, dict[str, float]]:
     gen_wm_jsonl, gen_no_wm_jsonl = args.gen_wm_jsonl, args.gen_no_wm_jsonl
     wm_jsonl, no_wm_jsonl = args.wm_jsonl, args.no_wm_jsonl
     with (
@@ -110,11 +115,15 @@ def main():
         results = evaluate_fpr_tpr(args.fprs, gen_wm_data, gen_no_wm_data, wm_data, no_wm_data)
         for fpr, result in zip(fprs, results):
             gen_tpr, old_tpr, new_tpr = result["generated"], result["old"], result["new"]
-            print(
-                f"FPR: {fpr*100: >6.2f}%,    Gen TPR: {gen_tpr*100: >6.2f}%,    "
-                f"Old TPR: {old_tpr*100: >6.2f}%,    New TPR: {new_tpr*100: >6.2f}%"
-            )
+            if verbose:
+                print(
+                    f"FPR: {fpr*100: >6.2f}%,    Gen TPR: {gen_tpr*100: >6.2f}%,    "
+                    f"Old TPR: {old_tpr*100: >6.2f}%,    New TPR: {new_tpr*100: >6.2f}%"
+                )
+        return {fpr: result for fpr, result in zip(fprs, results)}
 
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(asctime)s %(message)s")
+    args = parse_args()
+    main(args, verbose=True)
