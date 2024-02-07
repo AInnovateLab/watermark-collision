@@ -19,8 +19,10 @@ class WatermarkBase:
         self,
         gamma: float,
         delta: float,
+        target_tokenizer,
         target_vocab_size: int,
     ):
+        self.target_tokenizer = target_tokenizer
         self.target_vocab_size = target_vocab_size
         self.gamma = gamma
         self.delta = delta
@@ -54,13 +56,14 @@ class WatermarkContext(WatermarkBase):
         self,
         device: torch.device,
         chunk_length,
+        target_tokenizer,
         target_vocab_size: int,
         delta: float = 4.0,
         gamma: float = 0.5,
         embedding_model: str = "bert-large",
         transform_model_path: str = "transform_model.pth",
     ):
-        super().__init__(gamma, delta, target_vocab_size)
+        super().__init__(gamma, delta, target_tokenizer, target_vocab_size)
         self.device = device
         self.embedding_tokenizer = AutoTokenizer.from_pretrained(embedding_model)
         self.embedding_model = BertModel.from_pretrained(embedding_model).to(self.device)
@@ -172,11 +175,12 @@ class WatermarkWindow(WatermarkBase):
         device,
         window_size,
         target_tokenizer,
+        target_vocab_size: int,
         gamma: float = 0.5,
         delta: float = 2.0,
         hash_key: int = 15485863,
     ):
-        super().__init__(gamma, delta, target_tokenizer)
+        super().__init__(gamma, delta, target_tokenizer, target_vocab_size)
         self.device = device
         self.rng = torch.Generator(device=device)
         self.hash_key = hash_key

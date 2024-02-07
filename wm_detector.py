@@ -8,8 +8,8 @@ import sys
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Literal, Type
 from functools import partial
+from typing import Any, Literal, Type
 
 import numpy as np
 import torch
@@ -248,6 +248,7 @@ class SIRWMDetector(WMDetectorBase):
                 device=self.model.device,
                 window_size=self.window_size,
                 target_tokenizer=self.tokenizer,
+                target_vocab_size=self.model.config.vocab_size,
                 gamma=self.gamma,
                 delta=self.delta,
                 hash_key=self.key,
@@ -257,6 +258,7 @@ class SIRWMDetector(WMDetectorBase):
                 device=self.model.device,
                 chunk_length=self.chunk_length,
                 target_tokenizer=self.tokenizer,
+                target_vocab_size=self.model.config.vocab_size,
                 gamma=self.gamma,
                 delta=self.delta,
                 transform_model_path=self.transform_model_path,
@@ -379,7 +381,7 @@ class UBWWMDetector(WMDetectorBase):
             watermark_processor=self.warper,
             score=scorer,
             model=self.model,
-            tokenizer=self.tokenizer,
+            tokenizer=self.model.config.vocab_size,
             temperature=self.temperature,
             prompt="",
         )
@@ -445,6 +447,7 @@ class RDWWMDetector(WMDetectorBase):
 
         if n_workers >= 2:
             from concurrent.futures import ProcessPoolExecutor
+
             os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
             self.process_pool = ProcessPoolExecutor(max_workers=n_workers)
@@ -453,7 +456,7 @@ class RDWWMDetector(WMDetectorBase):
 
     @staticmethod
     def detect(tokens, n, k, xi, gamma=0.0):
-        
+
         from RDW.levenshtein import levenshtein
 
         m = len(tokens)
@@ -484,7 +487,7 @@ class RDWWMDetector(WMDetectorBase):
         """
         input_ids = self.prepare_unbatched_input(input_ids).numpy()
         token_length = len(input_ids)
-        vocab_size = len(self.tokenizer)
+        vocab_size = self.model.config.vocab_size
         n_runs = 100
         from RDW.mersenne import mersenne_rng
 
@@ -498,12 +501,22 @@ class RDWWMDetector(WMDetectorBase):
         for _ in range(n_runs):
             xi_alternative = np.random.rand(self.wm_sequence_length, vocab_size).astype(np.float32)
             if self.process_pool is not None:
-                p_val_l.append(self.process_pool.submit(RDWWMDetector.detect, input_ids, self.wm_sequence_length, token_length, xi_alternative))
+                p_val_l.append(
+                    self.process_pool.submit(
+                        RDWWMDetector.detect,
+                        input_ids,
+                        self.wm_sequence_length,
+                        token_length,
+                        xi_alternative,
+                    )
+                )
             else:
-                p_val_l.append(self.detect(input_ids, self.wm_sequence_length, token_length, xi_alternative))
+                p_val_l.append(
+                    self.detect(input_ids, self.wm_sequence_length, token_length, xi_alternative)
+                )
         if self.process_pool is not None:
             p_val_l = [it.result() for it in p_val_l]
-        
+
         # assuming lower test values indicate presence of watermark
         p_val = sum([r <= test_result for r in p_val_l])
 
@@ -549,7 +562,7 @@ class PRWWMDetector(WMDetectorBase):
         self.watermark_detector = GPTWatermarkDetector(
             fraction=self.fraction,
             strength=self.strength,
-            vocab_size=self.tokenizer.vocab_size,
+            vocab_size=self.model.config.vocab_size,
             watermark_key=int(self.key),
         )
 

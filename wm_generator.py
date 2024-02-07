@@ -228,6 +228,7 @@ class SIRWMGenerator(WMGeneratorBase):
             self.watermark_model = WatermarkWindow(
                 device=self.model.device,
                 window_size=self.window_size,
+                target_tokenizer=self.tokenizer,
                 target_vocab_size=self.model.config.vocab_size,
                 gamma=self.gamma,
                 delta=self.delta,
@@ -237,6 +238,7 @@ class SIRWMGenerator(WMGeneratorBase):
             self.watermark_model = WatermarkContext(
                 device=self.model.device,
                 chunk_length=self.chunk_length,
+                target_tokenizer=self.tokenizer,
                 target_vocab_size=self.model.config.vocab_size,
                 gamma=self.gamma,
                 delta=self.delta,
@@ -458,7 +460,7 @@ class RDWWMGenerator(WMGeneratorBase):
         output_tokens = self.generate_shift(
             self.model,
             input_ids,
-            vocab_size=len(self.tokenizer),
+            vocab_size=self.model.config.vocab_size,
             wm_sequence_length=self.wm_sequence_length,
             key=self.key,
             **kwargs,
