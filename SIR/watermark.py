@@ -19,10 +19,9 @@ class WatermarkBase:
         self,
         gamma: float,
         delta: float,
-        target_tokenizer,
+        target_vocab_size: int,
     ):
-        self.target_tokenizer = target_tokenizer
-        self.vocab_size = len(self.target_tokenizer)
+        self.target_vocab_size = target_vocab_size
         self.gamma = gamma
         self.delta = delta
 
@@ -45,7 +44,7 @@ class WatermarkBase:
 
     def _get_bias(self, input_ids: torch.LongTensor) -> list[int]:
         green_list_ids = self._get_greenlist_ids(input_ids).cpu().numpy()
-        bias = np.zeros(self.vocab_size, dtype=int)
+        bias = np.zeros(self.target_vocab_size, dtype=int)
         bias[green_list_ids] = 1
         return bias
 
@@ -55,13 +54,13 @@ class WatermarkContext(WatermarkBase):
         self,
         device: torch.device,
         chunk_length,
-        target_tokenizer,
+        target_vocab_size: int,
         delta: float = 4.0,
         gamma: float = 0.5,
         embedding_model: str = "bert-large",
         transform_model_path: str = "transform_model.pth",
     ):
-        super().__init__(gamma, delta, target_tokenizer)
+        super().__init__(gamma, delta, target_vocab_size)
         self.device = device
         self.embedding_tokenizer = AutoTokenizer.from_pretrained(embedding_model)
         self.embedding_model = BertModel.from_pretrained(embedding_model).to(self.device)
@@ -70,13 +69,13 @@ class WatermarkContext(WatermarkBase):
         transform_model.load_state_dict(torch.load(transform_model_path))
         self.transform_model = transform_model.to(self.device)
         water_mark_dim = self.transform_model.layers[-1].out_features
-        mapping_file = f"data/mappings/{water_mark_dim}_mapping_{len(target_tokenizer)}.json"
+        mapping_file = f"data/mappings/{water_mark_dim}_mapping_{self.target_vocab_size}.json"
         if os.path.exists(mapping_file):
             with open(mapping_file, "r") as f:
                 self.mapping = json.load(f)
         else:
             self.mapping = [
-                random.randint(0, water_mark_dim - 1) for _ in range(len(target_tokenizer))
+                random.randint(0, water_mark_dim - 1) for _ in range(self.target_vocab_size)
             ]
             os.makedirs(os.path.dirname(mapping_file), exist_ok=True)
             with open(mapping_file, "w") as f:

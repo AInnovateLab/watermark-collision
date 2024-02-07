@@ -228,7 +228,7 @@ class SIRWMGenerator(WMGeneratorBase):
             self.watermark_model = WatermarkWindow(
                 device=self.model.device,
                 window_size=self.window_size,
-                target_tokenizer=self.tokenizer,
+                target_vocab_size=self.model.config.vocab_size,
                 gamma=self.gamma,
                 delta=self.delta,
                 hash_key=self.key,
@@ -237,7 +237,7 @@ class SIRWMGenerator(WMGeneratorBase):
             self.watermark_model = WatermarkContext(
                 device=self.model.device,
                 chunk_length=self.chunk_length,
-                target_tokenizer=self.tokenizer,
+                target_vocab_size=self.model.config.vocab_size,
                 gamma=self.gamma,
                 delta=self.delta,
                 transform_model_path=self.transform_model_path,
@@ -510,7 +510,7 @@ class PRWWMGenerator(WMGeneratorBase):
         self.logits_processor = GPTWatermarkLogitsWarper(
             fraction=self.fraction,
             strength=self.strength,
-            vocab_size=self.tokenizer.vocab_size,
+            vocab_size=self.model.config.vocab_size,
             watermark_key=int(self.key),
         )
 
