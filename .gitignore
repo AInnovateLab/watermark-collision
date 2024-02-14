@@ -170,7 +170,9 @@ tmp/
 
 # All test files
 test*
+tmp*
 *.pth
+*.png
 
 # Modified run script
 wm_usr.sh
