@@ -1,5 +1,20 @@
 """
 Back translate all in one!
+
+json config structure:
+    {
+        "rephraser": [
+            {},  // Rephraser config(both generator and detector) if use_wm is set
+            False,  // False if use_wm is False
+            ...
+        ],
+        "key": [
+            2023,   // Key for watermark generator
+            None,   // None if use_wm is False or generator do not need to specify a key
+            ...
+        ],
+    }
+
 """
 
 import argparse
@@ -9,11 +24,11 @@ from pathlib import Path
 from datasets import load_dataset, Dataset
 
 import jsonlines
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from typing import Optional
+from typing import Optional, List, Any, Union
 
 import wm_detector as WMD
 import wm_generator as WMG
@@ -88,8 +103,8 @@ class BackTranslate:
             file_path = self.args.input_file
             logging.info(f"Loading data from: {file_path}")
             with jsonlines.open(file_path, "r") as reader:
-                # TODO: Use config data to create old detector
-                orig_config = reader.read()
+                # Use config data to create old detector
+                self.orig_config = reader.read()
                 wm_data = list(reader)
             data = list({"text": d["original_text"]} for d in wm_data)
             self.dataset = Dataset.from_list(data)
@@ -99,6 +114,10 @@ class BackTranslate:
         """
         WM Generator & Detector
         """
+        self.detector_configs: List[DictConfig] = []
+        self.detectors: List[WMD.WMDetectorBase] = []
+        self.keys: List[Union[str, int, None]] = []
+        self.generator: Union[WMG.WMGeneratorBase, Any]
         if not self.use_wm and self.step == 1:
             raise ValueError("WM Generator must be enabled in step 1.")
         if self.step == 1:
@@ -108,16 +127,46 @@ class BackTranslate:
             logging.info(f"Loading Detector config from: {self.args.old_detector_file}")
             self.detector_config = OmegaConf.load(self.args.old_detector_file).detector
         elif self.step == 2:
+            # Load original detector config from jsonl file
+            # TODO: Modify here if we need to detect watermark using other detectors
+            self.detector_configs.append(OmegaConf.create(self.orig_config['rephraser'][-1]).detector)
+            self.keys.append(self.orig_config['key'][-1])
             if self.use_wm:
                 # TODO: Merge ?
                 logging.info(f"Loading new Rephraser & Detector config from: {self.args.new_detector_file}")
-                self.detector_config = OmegaConf.create(orig_config['dector_config'])
-                self.new_detector_config = OmegaConf.load(self.args.new_detector_file).detector
+                self.detector_configs.append(OmegaConf.load(self.args.new_detector_file).detector)
+                self.keys.append(self.args.new_key)
                 self.rephraser_config = OmegaConf.load(self.args.rephraser_file).generator
-                self.new_key = self.args.new_key
-            else:
-                # Use same detector config if no_wm is set
-                self.detector_config = self.new_detector_config = OmegaConf.create(orig_config['detector_config'])
+                self.rephraser_key = self.args.key
+            
+                
+        """
+        Prepare output file
+        """
+        
+    def init_watermark(self):
+        if self.use_wm:
+            # Load rephraser if use_wm
+            generator_class = WMG.get_generator_class_from_type(self.rephraser_config.type)
+            self.generator = generator_class(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                key=self.rephraser_key,
+                # TODO: generator configs
+                **self.generator_config,
+            )
+        else:
+            # no wm, use model directly
+            self.generator = self.model
+        # Load all detectors in the list
+        for detector_config, key in zip(self.detector_configs, self.keys):
+            detector_class = WMD.get_detector_class_from_type(detector_config.type)
+            self.detectors.append(detector_class(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                key=key,
+                **detector_config,
+            ))
         
     def translate(self):
         pass
