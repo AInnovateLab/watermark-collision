@@ -13,8 +13,31 @@ json config structure:
             None,   // None if use_wm is False or generator do not need to specify a key
             ...
         ],
+        "detector": [
+            [
+                {}, // Detector configs
+                ... // Multiple detectors can be used
+            ],
+            ...     // Each step will have a list of detector configs, matching the number of score in data
+        ]
     }
 
+
+json data structure:
+    {
+        "text": [
+            "Original Text",
+            "Generated Text 1",
+            "Generated Text 2",
+            ...
+        ],
+        "results": [
+            [
+                {}, // Score Like Object
+                ..., // Will have multiple score objects if multiple detectors are used
+            ]
+        ]
+    }
 """
 
 import argparse
@@ -29,6 +52,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from typing import Optional, List, Any, Union
+from copy import deepcopy
 
 import wm_detector as WMD
 import wm_generator as WMG
@@ -43,18 +67,15 @@ def parse():
     parser.add_argument("--step", type=int, required=True)
     # Step 1 dataset
     parser.add_argument("--dataset-name", type=str, default="stas/c4-en-10k")
-    parser.add_argument("--max-valid", type=int, default=10000)
+    parser.add_argument("--max-valid", type=int, default=10000, help="Max number of validation samples. Will be ignored if in step 2.")
+    parser.add_argument("--valid-only", type=bool, default=True, help="Only log valid result. Will be ignored if in step 2.")
     # Step 2 dataset
     parser.add_argument("--input-file", type=str, required=True, help="Path to input file.")
     # Watermark settings
     parser.add_argument("--use-wm", action="store_true", default=False)
+    parser.add_argument("--rephraser-file", type=str, default='', help="Yaml file for rephraser.")
     parser.add_argument("--key", type=int, default=2023)
-    # Generator/Detector loading
-    parser.add_argument("--rephraser-file", type=str, required=True, help="Yaml file for rephraser.")
-    parser.add_argument("--old-detector-file", type=str, required=True, help="Yaml file for old detector.")
-    # Dual watermark configuration, only use in step 2
-    parser.add_argument("--new-detector-file", type=str, required=True, help="Yaml file for new detector.")
-    parser.add_argument("--new-key", type=str, required=True, help="Yaml file for new detector.")
+    
     # generate kwargs
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--min-new-tokens", type=int, default=16)
@@ -64,6 +85,7 @@ def parse():
     output_ex_group = parser.add_mutually_exclusive_group(required=True)
     output_ex_group.add_argument("--output-dir", type=str, help="Output directory. If specified, enable automatic naming from the yaml file of generator and detector.",)
     output_ex_group.add_argument("--output-file", type=str, help="Output file name. If specified, disable the automatic naming and ignore the --output-dir setting.",)
+
     return parser.parse_args()
 
 
@@ -73,6 +95,7 @@ class BackTranslate:
         """
         Basic configs
         """
+        self.args = args
         self.use_wm = args.use_wm
         self.device = args.device
         self.step = args.step
@@ -90,7 +113,7 @@ class BackTranslate:
         """
         Datasets
         """
-        if self.args.step == 1:
+        if self.step == 1:
             self.prompt: str = self.model_config.model_prompt_translate
             logging.info(f"Loading dataset:{self.args.dataset_name}...")
             self.dataset = load_dataset(self.args.dataset_name)
@@ -106,7 +129,7 @@ class BackTranslate:
                 # Use config data to create old detector
                 self.orig_config = reader.read()
                 wm_data = list(reader)
-            data = list({"text": d["original_text"]} for d in wm_data)
+            data = list({"text": d["text"][-1]} for d in wm_data)
             self.dataset = Dataset.from_list(data)
             self.prompt = self.model_config.model_prompt_back_translate
             self.tokenized_dataset = self.dataset.map(lambda b: self.tokenizer(self.prompt.format(b["text"]), return_tensors="pt", truncation=True, max_length=128))
@@ -123,26 +146,77 @@ class BackTranslate:
         if self.step == 1:
             # Step 1: Load wm generator & detector from args directly
             logging.info(f"Loading Rephraser Generator config from: {args.rephraser_file}")
-            self.rephraser_config = OmegaConf.load(self.args.rephraser_file).generator
+            rephraser_config = OmegaConf.load(args.rephraser_file)
+            self.rephraser_config = rephraser_config.generator
             logging.info(f"Loading Detector config from: {self.args.old_detector_file}")
-            self.detector_config = OmegaConf.load(self.args.old_detector_file).detector
+            self.detector_configs.append(rephraser_config.detector)
+            self.orig_config = {
+                "rephraser": [OmegaConf.to_container(rephraser_config)],
+                "key": [self.args.key],
+            }
         elif self.step == 2:
             # Load original detector config from jsonl file
             # TODO: Modify here if we need to detect watermark using other detectors
-            self.detector_configs.append(OmegaConf.create(self.orig_config['rephraser'][-1]).detector)
-            self.keys.append(self.orig_config['key'][-1])
+            last_rep_idx = self._get_last_detector_idx()
+            self.detector_configs.append(OmegaConf.create(self.orig_config['rephraser'][last_rep_idx]).detector)
+            self.keys.append(self.orig_config['key'][last_rep_idx])
             if self.use_wm:
                 # TODO: Merge ?
-                logging.info(f"Loading new Rephraser & Detector config from: {self.args.new_detector_file}")
-                self.detector_configs.append(OmegaConf.load(self.args.new_detector_file).detector)
-                self.keys.append(self.args.new_key)
-                self.rephraser_config = OmegaConf.load(self.args.rephraser_file).generator
+                logging.info(f"Loading new Rephraser & Detector config from: {self.args.rephraser_file}")
+                rephraser_config = OmegaConf.load(args.rephraser_file)
+                self.detector_configs.append(rephraser_config.detector)
+                self.keys.append(self.args.key)
+                self.rephraser_config = rephraser_config.generator
                 self.rephraser_key = self.args.key
+                self.orig_config['rephraser'].append(OmegaConf.to_container(rephraser_config))
+                self.orig_config['key'].append(self.args.key)
+            else:
+                self.orig_config['rephraser'].append(False)
+                self.orig_config['key'].append(None)
+        self.init_watermark()
             
                 
         """
         Prepare output file
+        TODO: Need a new auto naming rule
         """
+        if self.args.output_file:
+            file_path = Path(self.args.output_file)
+        elif self.args.output_dir:
+            file_path = Path(self.args.output_dir)
+            file_path.mkdir(parents=True, exist_ok=True)
+            # automatic naming
+            input_filename_hash = hashlib.md5(
+                Path(self.args.input_file).stem.encode("utf-8")
+            ).hexdigest()
+            input_filename_hash = input_filename_hash[:8]
+            rephraser_filename = Path(self.args.rephraser_file).stem
+            detector_old_filename = Path(self.args.old_detector_file).stem
+            detector_new_filename = Path(self.args.new_detector_file).stem
+            file_path = (
+                file_path
+                / f"{input_filename_hash}@{rephraser_filename}__{detector_old_filename}__{detector_new_filename}.jsonl"
+            )
+        else:
+            raise argparse.ArgumentError(
+                None, "Either --output-file or --output-dir must be specified."
+            )
+
+        if file_path.exists():
+            logging.warning(f"Output file exists: {file_path}")
+            if not self.args.no_confirm:
+                override_input = input("Output file exists. Do you want to overwrite? (y/[n]): ")
+                if "y" not in override_input.lower():
+                    logging.info("Aborting.")
+                    return
+            else:
+                logging.info("Overwrite output file due to --no-confirm set")
+        logging.info(f"Saving results to {file_path}")
+        self.file_path = file_path
+        
+        # Log all configs to the output file
+        with jsonlines.open(file_path, "w") as writer:
+            writer.write(self.orig_config)
         
     def init_watermark(self):
         if self.use_wm:
@@ -152,8 +226,7 @@ class BackTranslate:
                 model=self.model,
                 tokenizer=self.tokenizer,
                 key=self.rephraser_key,
-                # TODO: generator configs
-                **self.generator_config,
+                **self.rephraser_config,
             )
         else:
             # no wm, use model directly
@@ -167,18 +240,85 @@ class BackTranslate:
                 key=key,
                 **detector_config,
             ))
+ 
+    def _get_last_detector_idx(self):
+        for i, rephraser_config in enumerate(reversed(self.orig_config['rephraser'])):
+            if rephraser_config:
+                return i
         
     def translate(self):
-        pass
+        generate_kwargs = {
+            "temperature": self.args.temperature,
+            "do_sample": True,
+            "top_p": self.args.top_p,
+            "top_k": self.args.top_k,
+            "max_new_tokens": self.args.max_new_tokens,
+            "min_new_tokens": self.args.min_new_tokens,
+        }
+        if self.use_wm:
+            # Origin model do not accept these kwargs
+            generate_kwargs.update(self.rephraser_config.get("generate_kwargs", {}))
+            generate_kwargs.update({"truncate_output": True})
+        
+        # Run the translation
+        total_num = self.args.max_valid if self.step == 1 else len(self.tokenized_dataset)
+        with (
+            jsonlines.open(self.file_path, mode="w") as writer,
+            tqdm(total=total_num, desc="Valid samples", dynamic_ncols=True) as pbar,
+        ):
+            """
+            TODO: Detector configs here!
+            """
+            writer.write(self.orig_config)
+            valid_num = 0
+
+            for data in self.tokenized_dataset:
+                input_ids = data["input_ids"].to(self.device)
+                output_tokens = self.generator.generate(input_ids, **generate_kwargs)
+
+                output_text = self.generator.tokens2text(output_tokens)
+                detect_results = []
+                for detector in self.detectors:
+                    detect_result = detector.detect_tokens(output_tokens)
+                    detect_results.append(detect_result.asdict())
+                
+                # Use the last detector result to validate
+                if self.step == 2 or not self.args.valid_only or detect_result.prediction == True or detect_result.prediction is None:
+                    valid_num += 1
+                    """
+                    Save results and generated text to the output file, along with history
+                    """
+                    if self.step == 1:
+                        # Step 1: data['text'] load from dataset, which is a string
+                        writer.write(
+                            {
+                                "results": [detect_results],
+                                "text": [data["text"], output_text],
+                            }
+                        )
+                    else:
+                        # Step 2+: history generated texts and detect results load from jsonl file, which is a list
+                        det_result = deepcopy(data['results'])
+                        texts = deepcopy(data['text'])
+                        det_result.append(detect_results)
+                        texts.append(output_text)
+                        writer.write(
+                            {
+                                "results": det_result,
+                                "text": texts,
+                            }
+                        )
+                    pbar.update()
+
+                if self.step == 1 and valid_num >= self.args.max_valid:
+                    break
     
-    def back_translate(self):
-        pass
         
 
 def main():
     args = parse()
     wm = BackTranslate(args)
-    wm.rephrase()
+    wm.translate()
 
 
 if __name__ == "__main__":
