@@ -25,7 +25,7 @@ json config structure:
 
 json data structure:
     {
-        "text": [
+        "texts": [
             "Original Text",
             "Generated Text 1",
             "Generated Text 2",
@@ -45,6 +45,7 @@ import hashlib
 import logging
 from pathlib import Path
 from datasets import load_dataset, Dataset
+from datasets.download.download_manager import DownloadConfig
 
 import jsonlines
 from omegaconf import OmegaConf, DictConfig
@@ -65,12 +66,13 @@ def parse():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--model-config-file", type=str, required=True, help="Yaml file for model and prompt config")
     parser.add_argument("--step", type=int, required=True)
+    parser.add_argument("--proxy", type=str, default=None, help="Proxy for downloading models and datasets")
     # Step 1 dataset
     parser.add_argument("--dataset-name", type=str, default="stas/c4-en-10k")
     parser.add_argument("--max-valid", type=int, default=10000, help="Max number of validation samples. Will be ignored if in step 2.")
     parser.add_argument("--valid-only", type=bool, default=True, help="Only log valid result. Will be ignored if in step 2.")
     # Step 2 dataset
-    parser.add_argument("--input-file", type=str, required=True, help="Path to input file.")
+    parser.add_argument("--input-file", type=str, help="Path to input file.")
     # Watermark settings
     parser.add_argument("--use-wm", action="store_true", default=False)
     parser.add_argument("--rephraser-file", type=str, default='', help="Yaml file for rephraser.")
@@ -80,6 +82,8 @@ def parse():
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--min-new-tokens", type=int, default=16)
     parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--top-k", type=int, default=40)
     # I/O
     parser.add_argument("--no-confirm", action="store_true", default=False, help="Overwrite output file without confirmation if set true")
     output_ex_group = parser.add_mutually_exclusive_group(required=True)
@@ -99,16 +103,28 @@ class BackTranslate:
         self.use_wm = args.use_wm
         self.device = args.device
         self.step = args.step
+        if self.args.proxy:
+            self.proxy = {
+                "http": self.args.proxy,
+                "https": self.args.proxy,
+            }
+            self.dataset_proxy = DownloadConfig(proxies=self.proxy)
+        else:
+            self.proxy = None
+            self.dataset_proxy = None
+        
+        if self.step != 1 and self.args.input_file is None:
+            raise ValueError("Input file must be specified in step 2.")
         
         """
         Model & Tokenizer
         """
         self.model_config = OmegaConf.load(args.model_config_file)
-        logging.info(f"Loading model and tokenizer: {self.args.model_name_or_path}")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_config.model_name, use_fast=True, padding_side="left")
+        logging.info(f"Loading model and tokenizer: {self.model_config.model_name}")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_config.model_name, use_fast=True, padding_side="left", proxies=self.proxy)
         if not self.tokenizer.pad_token:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(self.model_config.model_name, device_map=0, trust_remote_code=True, revision="main")
+        self.model = AutoModelForCausalLM.from_pretrained(self.model_config.model_name, device_map='auto', trust_remote_code=True, revision="main", proxies=self.proxy)
 
         """
         Datasets
@@ -116,8 +132,8 @@ class BackTranslate:
         if self.step == 1:
             self.prompt: str = self.model_config.model_prompt_translate
             logging.info(f"Loading dataset:{self.args.dataset_name}...")
-            self.dataset = load_dataset(self.args.dataset_name)
-            self.dataset = self.dataset["train"]
+            self.dataset = load_dataset(self.args.dataset_name, split='train', download_config=self.dataset_proxy)
+            # self.dataset = self.dataset["train"]
             logging.info("Preprocessing datasets...")
             self.tokenized_dataset = self.dataset.map(lambda b: self.tokenizer(self.prompt.format(b["text"]), return_tensors="pt", truncation=True, max_length=128))
             self.tokenized_dataset.set_format("torch")
@@ -129,7 +145,7 @@ class BackTranslate:
                 # Use config data to create old detector
                 self.orig_config = reader.read()
                 wm_data = list(reader)
-            data = list({"text": d["text"][-1]} for d in wm_data)
+            data = list({"text": d["texts"][-1], "texts": d["texts"], "results": d["results"]} for d in wm_data)
             self.dataset = Dataset.from_list(data)
             self.prompt = self.model_config.model_prompt_back_translate
             self.tokenized_dataset = self.dataset.map(lambda b: self.tokenizer(self.prompt.format(b["text"]), return_tensors="pt", truncation=True, max_length=128))
@@ -148,7 +164,9 @@ class BackTranslate:
             logging.info(f"Loading Rephraser Generator config from: {args.rephraser_file}")
             rephraser_config = OmegaConf.load(args.rephraser_file)
             self.rephraser_config = rephraser_config.generator
-            logging.info(f"Loading Detector config from: {self.args.old_detector_file}")
+            self.rephraser_key = self.args.key
+            self.keys.append(self.args.key)
+            logging.info(f"Loading Detector config from: {args.rephraser_file}")
             self.detector_configs.append(rephraser_config.detector)
             self.orig_config = {
                 "rephraser": [OmegaConf.to_container(rephraser_config)],
@@ -275,8 +293,12 @@ class BackTranslate:
             for data in self.tokenized_dataset:
                 input_ids = data["input_ids"].to(self.device)
                 output_tokens = self.generator.generate(input_ids, **generate_kwargs)
-
-                output_text = self.generator.tokens2text(output_tokens)
+                if self.use_wm:
+                    output_text = self.generator.tokens2text(output_tokens)
+                else:
+                    # truncate output
+                    output_tokens = output_tokens[:, input_ids.size(-1) :]
+                    output_text = self.tokenizer.decode(output_tokens[0], skip_special_tokens=True)
                 detect_results = []
                 for detector in self.detectors:
                     detect_result = detector.detect_tokens(output_tokens)
@@ -293,19 +315,19 @@ class BackTranslate:
                         writer.write(
                             {
                                 "results": [detect_results],
-                                "text": [data["text"], output_text],
+                                "texts": [data["text"], output_text],
                             }
                         )
                     else:
                         # Step 2+: history generated texts and detect results load from jsonl file, which is a list
                         det_result = deepcopy(data['results'])
-                        texts = deepcopy(data['text'])
+                        texts = deepcopy(data['texts'])
                         det_result.append(detect_results)
                         texts.append(output_text)
                         writer.write(
                             {
                                 "results": det_result,
-                                "text": texts,
+                                "texts": texts,
                             }
                         )
                     pbar.update()
