@@ -70,7 +70,7 @@ def parse():
     # Step 1 dataset
     parser.add_argument("--dataset-name", type=str, default="stas/c4-en-10k")
     parser.add_argument("--max-valid", type=int, default=10000, help="Max number of validation samples. Will be ignored if in step 2.")
-    parser.add_argument("--valid-only", type=bool, default=True, help="Only log valid result. Will be ignored if in step 2.")
+    parser.add_argument("--valid-only", type=bool, default=False, help="Only log valid result. Will be ignored if in step 2.")
     # Step 2 dataset
     parser.add_argument("--input-file", type=str, help="Path to input file.")
     # Watermark settings
@@ -79,8 +79,8 @@ def parse():
     parser.add_argument("--key", type=int, default=2023)
     
     # generate kwargs
-    parser.add_argument("--max-new-tokens", type=int, default=128)
-    parser.add_argument("--min-new-tokens", type=int, default=16)
+    parser.add_argument("--max-new-tokens", type=int, default=512)
+    parser.add_argument("--min-new-tokens", type=int, default=4)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--top-k", type=int, default=40)
@@ -91,6 +91,19 @@ def parse():
     output_ex_group.add_argument("--output-file", type=str, help="Output file name. If specified, disable the automatic naming and ignore the --output-dir setting.",)
 
     return parser.parse_args()
+
+
+def truncate_text(s: str, min_len=16, max_len: int = 48):
+    s = s.strip().split('.')
+    r = []
+    l = 0
+    for sentence in s:
+        sl = len(sentence.strip().split(' '))
+        if len(r) > 0 and l > min_len and sl + l > max_len:
+            break
+        r.append(sentence)
+        l += sl
+    return '.'.join(r)
 
 
 class BackTranslate:
@@ -135,7 +148,7 @@ class BackTranslate:
             self.dataset = load_dataset(self.args.dataset_name, split='train', download_config=self.dataset_proxy)
             # self.dataset = self.dataset["train"]
             logging.info("Preprocessing datasets...")
-            self.tokenized_dataset = self.dataset.map(lambda b: self.tokenizer(self.prompt.format(b["text"]), return_tensors="pt", truncation=True, max_length=128))
+            self.tokenized_dataset = self.dataset.map(lambda b: self.tokenizer(self.prompt.format(truncate_text(b["text"])), return_tensors="pt", truncation=True, max_length=256))
             self.tokenized_dataset.set_format("torch")
         else:
             # Load the generated text if in step 2. Load detector config from jsonl file.
@@ -148,7 +161,7 @@ class BackTranslate:
             data = list({"text": d["texts"][-1], "texts": d["texts"], "results": d["results"]} for d in wm_data)
             self.dataset = Dataset.from_list(data)
             self.prompt = self.model_config.model_prompt_back_translate
-            self.tokenized_dataset = self.dataset.map(lambda b: self.tokenizer(self.prompt.format(b["text"]), return_tensors="pt", truncation=True, max_length=128))
+            self.tokenized_dataset = self.dataset.map(lambda b: self.tokenizer(self.prompt.format(b["text"]), return_tensors="pt", truncation=True, max_length=256))
             
         """
         WM Generator & Detector
@@ -171,6 +184,7 @@ class BackTranslate:
             self.orig_config = {
                 "rephraser": [OmegaConf.to_container(rephraser_config)],
                 "key": [self.args.key],
+                "detector": []
             }
         elif self.step == 2:
             # Load original detector config from jsonl file
@@ -287,12 +301,16 @@ class BackTranslate:
             """
             TODO: Detector configs here!
             """
-            writer.write(self.orig_config)
+            orig_config = deepcopy(self.orig_config)
+            orig_config['detector'].append([OmegaConf.to_container(detector) for detector in self.detector_configs])
+            writer.write(orig_config)
             valid_num = 0
+            stop_id = self.tokenizer.encode('<|eot_id|>')[0]
 
             for data in self.tokenized_dataset:
                 input_ids = data["input_ids"].to(self.device)
-                output_tokens = self.generator.generate(input_ids, **generate_kwargs)
+                attn_mask = data["attention_mask"].to(self.device)
+                output_tokens = self.generator.generate(input_ids, attention_mask=attn_mask, eos_token_id=stop_id, pad_token_id=stop_id, **generate_kwargs)
                 if self.use_wm:
                     output_text = self.generator.tokens2text(output_tokens)
                 else:
