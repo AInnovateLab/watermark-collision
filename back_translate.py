@@ -79,8 +79,8 @@ def parse():
     parser.add_argument("--key", type=int, default=2023)
     
     # generate kwargs
-    parser.add_argument("--max-new-tokens", type=int, default=512)
-    parser.add_argument("--min-new-tokens", type=int, default=4)
+    parser.add_argument("--max-new-tokens", type=int, default=128)
+    parser.add_argument("--min-new-tokens", type=int, default=16)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--top-k", type=int, default=40)
@@ -93,7 +93,7 @@ def parse():
     return parser.parse_args()
 
 
-def truncate_text(s: str, min_len=16, max_len: int = 48):
+def truncate_text(s: str, min_len=16, max_len: int = 64):
     s = s.strip().split('.')
     r = []
     l = 0
@@ -295,7 +295,7 @@ class BackTranslate:
         # Run the translation
         total_num = self.args.max_valid if self.step == 1 else len(self.tokenized_dataset)
         with (
-            jsonlines.open(self.file_path, mode="w") as writer,
+            jsonlines.open(self.file_path, mode="w", flush='true') as writer,
             tqdm(total=total_num, desc="Valid samples", dynamic_ncols=True) as pbar,
         ):
             """
@@ -308,6 +308,10 @@ class BackTranslate:
             stop_id = self.tokenizer.encode('<|eot_id|>')[0]
 
             for data in self.tokenized_dataset:
+                if self.step == 1:
+                    print(">> ", truncate_text(data['text'].replace('\n', '\\n')))
+                else:
+                    print(">> ", truncate_text(data['texts'][-1].replace('\n', '\\n')))
                 input_ids = data["input_ids"].to(self.device)
                 attn_mask = data["attention_mask"].to(self.device)
                 output_tokens = self.generator.generate(input_ids, attention_mask=attn_mask, eos_token_id=stop_id, pad_token_id=stop_id, **generate_kwargs)
@@ -317,6 +321,11 @@ class BackTranslate:
                     # truncate output
                     output_tokens = output_tokens[:, input_ids.size(-1) :]
                     output_text = self.tokenizer.decode(output_tokens[0], skip_special_tokens=True)
+                print("<< ", output_text.replace('\n', '\\n'))
+                if (len(output_tokens[0]) < self.args.min_new_tokens // 2):
+                    # Something strange happened, skip this result
+                    print("Warn: Result is skipped due to output is too short")
+                    continue
                 detect_results = []
                 for detector in self.detectors:
                     detect_result = detector.detect_tokens(output_tokens)
@@ -333,7 +342,7 @@ class BackTranslate:
                         writer.write(
                             {
                                 "results": [detect_results],
-                                "texts": [data["text"], output_text],
+                                "texts": [truncate_text(data["text"]), output_text],
                             }
                         )
                     else:
