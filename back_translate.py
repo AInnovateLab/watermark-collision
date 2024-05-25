@@ -69,8 +69,8 @@ def parse():
     parser.add_argument("--proxy", type=str, default=None, help="Proxy for downloading models and datasets")
     # Step 1 dataset
     parser.add_argument("--dataset-name", type=str, default="stas/c4-en-10k")
-    parser.add_argument("--max-valid", type=int, default=10000, help="Max number of validation samples. Will be ignored if in step 2.")
-    parser.add_argument("--valid-only", type=bool, default=False, help="Only log valid result. Will be ignored if in step 2.")
+    parser.add_argument("--max-valid", type=int, default=1000, help="Max number of validation samples. Will be ignored if in step 2.")
+    parser.add_argument("--valid-only", type=bool, default=True, help="Only log valid result. Will be ignored if in step 2.")
     # Step 2 dataset
     parser.add_argument("--input-file", type=str, help="Path to input file.")
     # Watermark settings
@@ -305,8 +305,10 @@ class BackTranslate:
             orig_config['detector'].append([OmegaConf.to_container(detector) for detector in self.detector_configs])
             writer.write(orig_config)
             valid_num = 0
-            stop_id = self.tokenizer.encode('<|eot_id|>')[0]
-
+            if self.model_config.self_defined_eos:
+                stop_id = self.tokenizer.encode(self.model_config.self_defined_eos)[0]
+                generate_kwargs.update({"eos_token_id": stop_id, "pad_token_id": stop_id})
+                logging.info(f"Using self defined eos token: {self.model_config.self_defined_eos} with id: {stop_id}")
             for data in self.tokenized_dataset:
                 if self.step == 1:
                     print(">> ", truncate_text(data['text'].replace('\n', '\\n')))
@@ -314,7 +316,7 @@ class BackTranslate:
                     print(">> ", truncate_text(data['texts'][-1].replace('\n', '\\n')))
                 input_ids = data["input_ids"].to(self.device)
                 attn_mask = data["attention_mask"].to(self.device)
-                output_tokens = self.generator.generate(input_ids, attention_mask=attn_mask, eos_token_id=stop_id, pad_token_id=stop_id, **generate_kwargs)
+                output_tokens = self.generator.generate(input_ids, attention_mask=attn_mask, **generate_kwargs)
                 if self.use_wm:
                     output_text = self.generator.tokens2text(output_tokens)
                 else:
@@ -332,31 +334,35 @@ class BackTranslate:
                     detect_results.append(detect_result.asdict())
                 
                 # Use the last detector result to validate
-                if self.step == 2 or not self.args.valid_only or detect_result.prediction == True or detect_result.prediction is None:
+                
+                """
+                Save results and generated text to the output file, along with history
+                Log results anyway, but only update progress bar if the result is valid if configured
+                """
+                if self.step == 1:
+                    # Step 1: data['text'] load from dataset, which is a string
+                    writer.write(
+                        {
+                            "results": [detect_results],
+                            "texts": [truncate_text(data["text"]), output_text],
+                        }
+                    )
+                else:
+                    # Step 2+: history generated texts and detect results load from jsonl file, which is a list
+                    det_result = deepcopy(data['results'])
+                    texts = deepcopy(data['texts'])
+                    det_result.append(detect_results)
+                    texts.append(output_text)
+                    writer.write(
+                        {
+                            "results": det_result,
+                            "texts": texts,
+                        }
+                    )
+                
+                if self.step == 2 or detect_result.prediction is None or \
+                    (self.args.valid_only and detect_result.prediction == True):
                     valid_num += 1
-                    """
-                    Save results and generated text to the output file, along with history
-                    """
-                    if self.step == 1:
-                        # Step 1: data['text'] load from dataset, which is a string
-                        writer.write(
-                            {
-                                "results": [detect_results],
-                                "texts": [truncate_text(data["text"]), output_text],
-                            }
-                        )
-                    else:
-                        # Step 2+: history generated texts and detect results load from jsonl file, which is a list
-                        det_result = deepcopy(data['results'])
-                        texts = deepcopy(data['texts'])
-                        det_result.append(detect_results)
-                        texts.append(output_text)
-                        writer.write(
-                            {
-                                "results": det_result,
-                                "texts": texts,
-                            }
-                        )
                     pbar.update()
 
                 if self.step == 1 and valid_num >= self.args.max_valid:
