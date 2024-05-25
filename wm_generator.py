@@ -547,3 +547,91 @@ class PRWWMGenerator(WMGeneratorBase):
             "fraction": self.fraction,
             "strength": self.strength,
         }
+
+
+#######################
+#                     #
+#      GumbleSoft     #
+#                     #
+#######################
+class GSWMGenerator(WMGeneratorBase):
+    """
+    Wrapper class for GumbleSoft watermark generator. https://arxiv.org/abs/2402.12948
+    Ref:
+        Fu, J., Zhao, X., Yang, R., Zhang, Y., Chen, J., & Xiao, Y. (2024). GumbelSoft: Diversified Language Model Watermarking via the GumbelMax-trick. arXiv preprint arXiv:2402.12948.
+    """
+
+    TYPE = "GS"
+
+    def __init__(
+        self,
+        model: GenerationMixin | Any,
+        tokenizer: PreTrainedTokenizer | Any,
+        key: int,
+        *args,
+        seed: int = 42,
+        shift_max: int = 0,
+        seeding: str = "hash",
+        drop_prob: float = 0,
+        tau: float = 0,
+        **kwargs,
+    ) -> None:
+        super().__init__(model, tokenizer, key, *args, **kwargs)
+
+        from GS.generator import GumbelSoftGeneratorNg
+
+        self.generator = GumbelSoftGeneratorNg(
+            model = model,
+            tokenizer = tokenizer,
+            seed = seed,
+            shift_max = shift_max,
+            seeding = seeding,
+            hash_key = key,
+            drop_prob=drop_prob,
+            tau=tau,
+        )
+        
+        self.config = {
+            'shift_max': shift_max,
+            'seeding': seeding,
+            'drop_prob': drop_prob,
+            'tau': tau,
+        }
+        
+        self.warn = False
+
+    def generate(
+        self, input_ids: torch.LongTensor, *args, truncate_output: bool = True, **kwargs
+    ) -> torch.LongTensor:
+        """
+        Generate watermark tokens given input_ids.
+
+        Args:
+            input_ids (torch.LongTensor): input_ids to be watermarked.
+            truncate_output (bool): whether to truncate the output to the newly created tokens.
+        """
+        top_p = kwargs.pop("top_p", 1)
+        max_gen_len = kwargs.pop("max_new_tokens", 128)
+        temperature = kwargs.pop("temperature", 1.0)
+        if not self.warn and kwargs:
+            warnings.warn(f"GumbleSoft generator found unused generation kwargs: {', '.join(kwargs.keys())}")
+            self.warn = True
+        input_ids = self.prepare_batched_input(input_ids)
+        # generate watermark tokens
+        output_tokens = self.generator.generate(
+            input_ids,
+            max_gen_len=max_gen_len,
+            temperature=temperature,
+            top_p=top_p
+        )
+
+        # if decoder only model, then we need to isolate the
+        # newly generated tokens as only those are watermarked, the input/prompt is not
+        if truncate_output:
+            output_tokens = output_tokens[:, input_ids.shape[-1] :]
+
+        return output_tokens
+
+    def _state_dict(self) -> dict[str, Any]:
+        from copy import deepcopy
+        return deepcopy(self.config)
