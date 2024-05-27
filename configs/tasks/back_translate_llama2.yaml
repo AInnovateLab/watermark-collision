@@ -1,0 +1,28 @@
+
+
+task_name: back-translate
+
+model_name: TheBloke/Llama-2-13B-chat-GPTQ
+model_prompt_translate: "[INST] <<SYS>>
+Assume you are a helpful assistant.
+Your job is to translate the given text from English to French.
+<</SYS>>
+
+{0} [/INST]
+
+You're welcome! Here's a translated version of the original text:
+
+"
+
+model_prompt_back_translate: "[INST] <<SYS>>
+Assume you are a helpful assistant.
+Your job is to translate the given text from French to English.
+<</SYS>>
+
+{0} [/INST]
+
+You're welcome! Here's a translated version of the original text:
+
+"
+
+self_defined_eos: false

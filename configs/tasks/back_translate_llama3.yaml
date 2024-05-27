@@ -1,0 +1,24 @@
+
+
+task_name: back-translate
+
+model_name: astronomer/Llama-3-8B-Instruct-GPTQ-4-Bit
+model_prompt_translate: "<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+You are a helpful AI assistant for travel tips and recommendations<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Please translate following text from English to French. Only reply the translation result. Following is the text: 
+
+{0}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+Sure! Here is the translated version:"
+
+model_prompt_back_translate: "<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+You are a helpful AI assistant for travel tips and recommendations<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Please translate following text from English to French. Only reply the translation result. Following is the text: {0}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+Sure! Here is the translated version:"
+
+self_defined_eos: "<|eot_id|>"
