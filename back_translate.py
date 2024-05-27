@@ -19,7 +19,7 @@ json config structure:
                 ... // Multiple detectors can be used
             ],
             ...     // Each step will have a list of detector configs, matching the number of score in data
-        ]
+        ],
     }
 
 
@@ -149,7 +149,6 @@ class BackTranslate:
             # self.dataset = self.dataset["train"]
             logging.info("Preprocessing datasets...")
             self.tokenized_dataset = self.dataset.map(lambda b: self.tokenizer(self.prompt.format(truncate_text(b["text"])), return_tensors="pt", truncation=True, max_length=256))
-            self.tokenized_dataset.set_format("torch")
         else:
             # Load the generated text if in step 2. Load detector config from jsonl file.
             file_path = self.args.input_file
@@ -158,11 +157,11 @@ class BackTranslate:
                 # Use config data to create old detector
                 self.orig_config = reader.read()
                 wm_data = list(reader)
-            data = list({"text": d["texts"][-1], "texts": d["texts"], "results": d["results"]} for d in wm_data)
+            data = list({"text": d["texts"][-1], "texts": d["texts"], "results": d["results"]} for d in wm_data if d["results"][0][0]['prediction'])
             self.dataset = Dataset.from_list(data)
             self.prompt = self.model_config.model_prompt_back_translate
             self.tokenized_dataset = self.dataset.map(lambda b: self.tokenizer(self.prompt.format(b["text"]), return_tensors="pt", truncation=True, max_length=256))
-            
+        self.tokenized_dataset.set_format("torch", columns=['text', 'input_ids', 'attention_mask'], output_all_columns=True)
         """
         WM Generator & Detector
         """
@@ -332,7 +331,6 @@ class BackTranslate:
                 for detector in self.detectors:
                     detect_result = detector.detect_tokens(output_tokens)
                     detect_results.append(detect_result.asdict())
-                
                 # Use the last detector result to validate
                 
                 """
