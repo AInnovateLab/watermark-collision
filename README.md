@@ -1,4 +1,9 @@
-# Watermark
+# Watermark-Collision
+
+[![arXiv](https://img.shields.io/badge/arXiv-2403.10020-brightgreen.svg)](https://arxiv.org/abs/2403.10020)
+[![star badge](https://img.shields.io/github/stars/AInnovateLab/watermark-collision?style=social)](https://github.com/AInnovateLab/watermark-collision)
+
+This repo is the official implementation of NAACL'25 Findings paper "[Lost in Overlap: Exploring Watermark Collision in LLMs](https://arxiv.org/abs/2403.10020)".
 
 ## Installation
 ```shell
