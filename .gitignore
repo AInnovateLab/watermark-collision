@@ -173,6 +173,7 @@ test*
 tmp*
 *.pth
 *.png
+!docs/static/images/*.png
 
 # Modified run script
 wm_usr.sh
